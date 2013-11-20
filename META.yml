@@ -1,0 +1,36 @@
+---
+abstract: "App::Fetchware is Fetchware's API used to make extensions."
+author:
+  - 'David Yingling <deeelwy@gmail.com>'
+build_requires:
+  Test::Deep: 0
+configure_requires:
+  ExtUtils::MakeMaker: 6.30
+dynamic_config: 1
+generated_by: 'Dist::Zilla version 5.006, CPAN::Meta::Converter version 2.132830'
+license: perl
+meta-spec:
+  url: http://module-build.sourceforge.net/META-spec-v1.4.html
+  version: 1.4
+name: App-Fetchware
+requires:
+  Archive::Tar: 0
+  Archive::Zip: 0
+  Digest::MD5: 0
+  Digest::SHA: 0
+  File::HomeDir: 0
+  Getopt::Long: 0
+  HTML::TreeBuilder: 0
+  HTTP::Tiny: 0
+  Path::Class: 0
+  Perl::OSType: 0
+  Privileges::Drop: 0
+  Sub::Mage: 0
+  Term::UI: 0
+  Test::More: 0.98
+  Text::ParseWords: 0
+  URI: 0
+resources:
+  bugtracker: https://github.com/deeelwy/Fetchware/issues
+  repository: https://github.com/deeelwy/Fetchware.git
+version: 1.000
