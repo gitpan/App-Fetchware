@@ -344,7 +344,7 @@ App::FetchwareX::HTMLPageSync - An App::Fetchware extension that downloads files
 
 =head1 VERSION
 
-version 1.001
+version 1.002
 
 =head1 SYNOPSIS
 
