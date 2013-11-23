@@ -176,7 +176,7 @@ App::Fetchware::ExportAPI - Used by fetchware extensions to export their API sub
 
 =head1 VERSION
 
-version 1.000
+version 1.001
 
 =head1 SYNOPSIS
 

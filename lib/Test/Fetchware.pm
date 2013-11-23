@@ -567,7 +567,7 @@ Test::Fetchware - Provides testing subroutines for App::Fetchware.
 
 =head1 VERSION
 
-version 1.000
+version 1.001
 
 =head1 SYNOPSIS
 
@@ -639,7 +639,7 @@ regex instead of as just a string.
 
     print_ok(\&printer, $expected, $test_name);
 
-Tests if $expected is in the output that C<\&printer->()> produces on C<STDOUT>.
+Tests if $expected is in the output that C<\&printer-E<gt>()> produces on C<STDOUT>.
 
 It passes $test_name along to the underlying L<Test::More> function that it uses
 to do the test.

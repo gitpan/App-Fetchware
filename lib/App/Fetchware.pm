@@ -293,9 +293,8 @@ values. See perldoc App::Fetchware.
 EOD
     }
 
-    given($one_or_many_values) {
-        when('ONE') {
-            my $eval = <<'EOE'; 
+    if ($one_or_many_values eq 'ONE') {
+        my $eval = <<'EOE'; 
 package $package;
 
 sub $name (@) {
@@ -321,14 +320,14 @@ EOD
 }
 1; # return true from eval
 EOE
-            $eval =~ s/\$name/$name/g;
-            $eval =~ s/\$package/$package/g;
-            eval $eval or die <<EOD;
+        $eval =~ s/\$name/$name/g;
+        $eval =~ s/\$package/$package/g;
+        eval $eval or die <<EOD;
 1App-Fetchware: internal operational error: _make_config_sub()'s internal eval()
 call failed with the exception [$@]. See perldoc App::Fetchware.
 EOD
-        } when('ONEARRREF') {
-            my $eval = <<'EOE'; 
+    } elsif ($one_or_many_values eq 'ONEARRREF') {
+        my $eval = <<'EOE'; 
 package $package;
 
 sub $name (@) {
@@ -348,15 +347,14 @@ EOD
 }
 1; # return true from eval
 EOE
-            $eval =~ s/\$name/$name/g;
-            $eval =~ s/\$package/$package/g;
-            eval $eval or die <<EOD;
+        $eval =~ s/\$name/$name/g;
+        $eval =~ s/\$package/$package/g;
+        eval $eval or die <<EOD;
 2App-Fetchware: internal operational error: _make_config_sub()'s internal eval()
 call failed with the exception [$@]. See perldoc App::Fetchware.
 EOD
-        }
-        when('MANY') {
-            my $eval = <<'EOE';
+    } elsif ($one_or_many_values eq 'MANY') {
+        my $eval = <<'EOE';
 package $package;
 
 sub $name (@) {
@@ -372,14 +370,14 @@ sub $name (@) {
 }
 1; # return true from eval
 EOE
-            $eval =~ s/\$name/$name/g;
-            $eval =~ s/\$package/$package/g;
-            eval $eval or die <<EOD;
+        $eval =~ s/\$name/$name/g;
+        $eval =~ s/\$package/$package/g;
+        eval $eval or die <<EOD;
 3App-Fetchware: internal operational error: _make_config_sub()'s internal eval()
 call failed with the exception [\$@]. See perldoc App::Fetchware.
 EOD
-        } when('BOOLEAN') {
-            my $eval = <<'EOE';
+    } elsif ($one_or_many_values eq 'BOOLEAN') {
+        my $eval = <<'EOE';
 package $package;
 
 sub $name (@) {
@@ -393,12 +391,10 @@ to $name but one. See perldoc App::Fetchware.
 EOD
     # Make extra false values false (0). Not needed for true values, because
     # everything but 0, '', and undef are true values.
-    given($value) {
-        when(/false/i) {
-            $value = 0;
-        } when(/off/i) {
-            $value = 0;
-        }
+    if ($value =~ /false/i) {
+        $value = 0;
+    } elsif ($value =~ /off/i) {
+        $value = 0;
     }
 
     unless (@_) {
@@ -415,13 +411,12 @@ EOD
 }
 1; # return true from eval
 EOE
-            $eval =~ s/\$name/$name/g;
-            $eval =~ s/\$package/$package/g;
-            eval $eval or die <<EOD;
+        $eval =~ s/\$name/$name/g;
+        $eval =~ s/\$package/$package/g;
+        eval $eval or die <<EOD;
 4App-Fetchware: internal operational error: _make_config_sub()'s internal eval()
 call failed with the exception [\$@]. See perldoc App::Fetchware.
 EOD
-        }
     }
 }
 
@@ -505,18 +500,16 @@ EOD
 
     # Only test lookup_method if it has been defined.
     if (defined config('lookup_method')) {
-        given (config('lookup_method')) {
-            when ('timestamp') {
-                # Do nothing
-            } when ('versionstring') {
-                # Do nothing
-            } default {
-                die <<EOD;
+        if (config('lookup_method') eq 'timestamp') {
+            # Do nothing
+        } elsif (config('lookup_method') eq 'versionstring') {
+            # Do nothing
+        } else {
+            die <<EOD;
 App-Fetchware: run-time syntax error: your Fetchwarefile specified a incorrect
 option to lookup_method. lookup_method only supports the options 'timestamp' and
 'versionstring'. All others are wrong. See man App::Fetchware.
 EOD
-            }
         }
     }
 
@@ -571,16 +564,14 @@ sub get_directory_listing {
 sub parse_directory_listing {
     my ($directory_listing) = @_;
 
-    given (config('lookup_url')) {
-        when (m!^ftp://!) {
-        ###BUGALERT### *_parse_filelist may not properly skip directories, so a
-        #directory could exist that could wind up being the "latest version"
-            return ftp_parse_filelist($directory_listing);
-        } when (m!^http://!) {
-            return http_parse_filelist($directory_listing);
-        } when (m!^file://!) {
-            return file_parse_filelist($directory_listing);
-        }
+    if (config('lookup_url') =~ m!^ftp://!) {
+    ###BUGALERT### *_parse_filelist may not properly skip directories, so a
+    #directory could exist that could wind up being the "latest version"
+        return ftp_parse_filelist($directory_listing);
+    } elsif (config('lookup_url') =~ m!^http://!) {
+        return http_parse_filelist($directory_listing);
+    } elsif (config('lookup_url') =~ m!^file://!) {
+        return file_parse_filelist($directory_listing);
     }
 }
 
@@ -592,17 +583,15 @@ sub determine_download_path {
     # Base lookup algorithm on lookup_method configuration sub if it was
     # specified.
     my $sorted_filename_listing;
-    given (config('lookup_method')) {
-        when ('timestamp') {
-            $sorted_filename_listing = lookup_by_timestamp($filename_listing);
-        } when ('versionstring') {
-            $sorted_filename_listing = lookup_by_versionstring($filename_listing);
-        # Default is to just use timestamp although timestamp will call
-        # versionstring if it can't figure it out, because all of the timestamps
-        # are the same.
-        } default {
-            $sorted_filename_listing = lookup_by_timestamp($filename_listing);
-        }
+    if (config('lookup_method') eq 'timestamp') {
+        $sorted_filename_listing = lookup_by_timestamp($filename_listing);
+    } elsif (config('lookup_method') eq 'versionstring') {
+        $sorted_filename_listing = lookup_by_versionstring($filename_listing);
+    # Default is to just use timestamp although timestamp will call
+    # versionstring if it can't figure it out, because all of the timestamps
+    # are the same.
+    } else {
+        $sorted_filename_listing = lookup_by_timestamp($filename_listing);
     }
 
     # Manage duplicate timestamps apropriately including .md5, .asc, .txt files.
@@ -664,21 +653,19 @@ sub determine_download_path {
             my $year_or_time = $fields[-2];
 
             # Normalize timestamp format.
-            given ($year_or_time) {
-                # It's a time.
-                when (/\d\d:\d\d/) {
-                    # the $month{} hash access replaces text months with numerical
-                    # ones.
-                    $year_or_time =~ s/://; # Make 12:00 1200 for numerical sort.
-                    #DELME$fl->[1] = "9999$month{$timestamp[0]}$timestamp[1]$timestamp[2]";
-                    $timestamp = "9999$month{$month}$day$year_or_time";
-                    # It's a year.
-                } when (/\d\d\d\d/) {
-                    # the $month{} hash access replaces text months with numerical
-                    # ones.
-                    #DELME$fl->[1] = "$timestamp[2]$month{$timestamp[0]}$timestamp[1]0000";
-                    $timestamp = "$year_or_time$month{$month}${day}0000";
-                }
+            # It's a time.
+            if ($year_or_time =~ /\d\d:\d\d/) {
+                # the $month{} hash access replaces text months with numerical
+                # ones.
+                $year_or_time =~ s/://; # Make 12:00 1200 for numerical sort.
+                #DELME$fl->[1] = "9999$month{$timestamp[0]}$timestamp[1]$timestamp[2]";
+                $timestamp = "9999$month{$month}$day$year_or_time";
+                # It's a year.
+            } elsif ($year_or_time =~ /\d\d\d\d/) {
+                # the $month{} hash access replaces text months with numerical
+                # ones.
+                #DELME$fl->[1] = "$timestamp[2]$month{$timestamp[0]}$timestamp[1]0000";
+                $timestamp = "$year_or_time$month{$month}${day}0000";
             }
             push @filename_listing, [$filename, $timestamp];
         }
@@ -926,32 +913,30 @@ sub lookup_determine_downloadpath {
     # Furthermore, choose them based on best compression to worst to save some
     # bandwidth.
     for my $fl (@$file_listing) {
-        given ($fl->[0]) {
-            when (/\.tar\.xz$/) {
-                my $path = ( uri_split(config('lookup_url')) )[2];
-                return "$path/$fl->[0]";
-            } when (/\.txz$/) {
-                my $path = ( uri_split(config('lookup_url')) )[2];
-                return "$path/$fl->[0]";
-            } when (/\.tar\.bz2$/) {
-                my $path = ( uri_split(config('lookup_url')) )[2];
-                return "$path/$fl->[0]";
-            } when (/\.tbz$/) {
-                my $path = ( uri_split(config('lookup_url')) )[2];
-                return "$path/$fl->[0]";
-            } when (/\.tar\.gz$/) {
-                my $path = ( uri_split(config('lookup_url')) )[2];
-                return "$path/$fl->[0]";
-            } when (/\.tgz$/) {
-                my $path = ( uri_split(config('lookup_url')) )[2];
-                return "$path/$fl->[0]";
-            } when (/\.zip$/) {
-                my $path = ( uri_split(config('lookup_url')) )[2];
-                return "$path/$fl->[0]";
-            } when (/\.fpkg$/) {
-                my $path = ( uri_split(config('lookup_url')) )[2];
-                return "$path/$fl->[0]";
-            }
+        if ($fl->[0] =~ /\.tar\.xz$/) {
+            my $path = ( uri_split(config('lookup_url')) )[2];
+            return "$path/$fl->[0]";
+        } elsif ($fl->[0] =~ /\.txz$/) {
+            my $path = ( uri_split(config('lookup_url')) )[2];
+            return "$path/$fl->[0]";
+        } elsif ($fl->[0] =~ /\.tar\.bz2$/) {
+            my $path = ( uri_split(config('lookup_url')) )[2];
+            return "$path/$fl->[0]";
+        } elsif ($fl->[0] =~ /\.tbz$/) {
+            my $path = ( uri_split(config('lookup_url')) )[2];
+            return "$path/$fl->[0]";
+        } elsif ($fl->[0] =~ /\.tar\.gz$/) {
+            my $path = ( uri_split(config('lookup_url')) )[2];
+            return "$path/$fl->[0]";
+        } elsif ($fl->[0] =~ /\.tgz$/) {
+            my $path = ( uri_split(config('lookup_url')) )[2];
+            return "$path/$fl->[0]";
+        } elsif ($fl->[0] =~ /\.zip$/) {
+            my $path = ( uri_split(config('lookup_url')) )[2];
+            return "$path/$fl->[0]";
+        } elsif ($fl->[0] =~ /\.fpkg$/) {
+            my $path = ( uri_split(config('lookup_url')) )[2];
+            return "$path/$fl->[0]";
         }
 ##DELME##        if (config('lookup_url') =~ m!^file://!) {
 ##DELME##        # Must prepend scheme, so that download() knows how to retrieve this
@@ -1019,118 +1004,116 @@ sub verify {
     msg "Verifying the downloaded package [$package_path]";
 
     my $retval;
-    given (config('verify_method')) {
-        when (undef) {
-            # if gpg fails try
-            # sha and if it fails try
-            # md5 and if it fails die
-            msg 'Trying to use gpg to cyptographically verify downloaded package.';
-            my ($gpg_err, $sha_err, $md5_err);
-            eval {$retval = gpg_verify($download_path)};
-            $gpg_err = $@;
-            if ($gpg_err) {
-                msg <<EOM;
+    if (config('verify_method') eq undef) {
+        # if gpg fails try
+        # sha and if it fails try
+        # md5 and if it fails die
+        msg 'Trying to use gpg to cyptographically verify downloaded package.';
+        my ($gpg_err, $sha_err, $md5_err);
+        eval {$retval = gpg_verify($download_path)};
+        $gpg_err = $@;
+        if ($gpg_err) {
+            msg <<EOM;
 Cyptographic verification using gpg failed!
 GPG verification error [
 $@
 ]
 EOM
-                warn $gpg_err;
-            }
-            if (! $retval or $gpg_err) {
-                msg <<EOM;
+            warn $gpg_err;
+        }
+        if (! $retval or $gpg_err) {
+            msg <<EOM;
 Trying SHA1 verification of downloaded package.
 EOM
-                eval {$retval = sha1_verify($download_path, $package_path)};
-                $sha_err = $@;
-                if ($sha_err) {
-                    msg <<EOM;
+            eval {$retval = sha1_verify($download_path, $package_path)};
+            $sha_err = $@;
+            if ($sha_err) {
+                msg <<EOM;
 SHA1 verification failed!
 SHA1 verificaton error [
 $@
 ]
 EOM
-                    warn $sha_err;
-                }
-                if (! $retval or $sha_err) {
-                    msg <<EOM;
+                warn $sha_err;
+            }
+            if (! $retval or $sha_err) {
+                msg <<EOM;
 Trying MD5 verification of downloaded package.
 EOM
-                    eval {$retval = md5_verify($download_path, $package_path)};
-                    $md5_err = $@;
-                    if ($md5_err) {
-                        msg <<EOM;
+                eval {$retval = md5_verify($download_path, $package_path)};
+                $md5_err = $@;
+                if ($md5_err) {
+                    msg <<EOM;
 MD5 verification failed!
 MD5 verificaton error [
 $@
 ]
 EOM
-                        warn $md5_err;
-                    }
+                    warn $md5_err;
                 }
-                if (! $retval or $md5_err) {
-                    die <<EOD unless config('verify_failure_ok');
+            }
+            if (! $retval or $md5_err) {
+                die <<EOD unless config('verify_failure_ok');
 App-Fetchware: run-time error. Fetchware failed to verify your downloaded
 software package. You can rerun fetchware with the --force option or add
 [verify_failure_ok 'True';] to your Fetchwarefile. See the section VERIFICATION
 FAILED in perldoc fetchware.
 EOD
-                }
-                if (config('verify_failure_ok')) {
-                        warn <<EOW;
+            }
+            if (config('verify_failure_ok')) {
+                    warn <<EOW;
 App-Fetchware: run-time warning. Fetchware failed to verify the integrity of you
 downloaded file [$package_path]. This is ok, because you asked Fetchware to
 ignore its errors when it tries to verify the integrity of your downloaded file.
 You can also ignore the errors Fetchware printed out abover where it tried to
 verify your downloaded file. See perldoc App::Fetchware.
 EOW
-                    vmsg <<EOM;
+                vmsg <<EOM;
 Verification Failed! But you asked to ignore verification failures, so this
 failure is not fatal.
 EOM
-                    return 'warned due to verify_failure_ok'
-                }
+                return 'warned due to verify_failure_ok'
             }
-        } when (/gpg/i) {
-            vmsg <<EOM;
+        }
+    } elsif (config('verify_method') =~ /gpg/i) {
+        vmsg <<EOM;
 You selected gpg cryptographic verification. Verifying now.
 EOM
-            ###BUGALERT### Should trap the exception {gpg,sha1,md5}_verify()
-            #throws, and then add that error to the one here, otherwise the
-            #error message here is never seen.
-            gpg_verify($download_path)
-                or die <<EOD unless config('verify_failure_ok');
+        ###BUGALERT### Should trap the exception {gpg,sha1,md5}_verify()
+        #throws, and then add that error to the one here, otherwise the
+        #error message here is never seen.
+        gpg_verify($download_path)
+            or die <<EOD unless config('verify_failure_ok');
 App-Fetchware: run-time error. You asked fetchware to only try to verify your
 package with gpg or openpgp, but they both failed. See the warning above for
 their error message. See perldoc App::Fetchware.
 EOD
-        } when (/sha1?/i) {
-            vmsg <<EOM;
+    } elsif (config('verify_method') =~ /sha1?/i) {
+        vmsg <<EOM;
 You selected SHA1 checksum verification. Verifying now.
 EOM
-            sha1_verify($download_path, $package_path)
-                or die <<EOD unless config('verify_failure_ok');
+        sha1_verify($download_path, $package_path)
+            or die <<EOD unless config('verify_failure_ok');
 App-Fetchware: run-time error. You asked fetchware to only try to verify your
 package with sha, but it failed. See the warning above for their error message.
 See perldoc App::Fetchware.
 EOD
-        } when (/md5/i) {
-            vmsg <<EOM;
+    } elsif (config('verify_method') =~ /md5/i) {
+        vmsg <<EOM;
 You selected MD5 checksum verification. Verifying now.
 EOM
-            md5_verify($download_path, $package_path)
-                or die <<EOD unless config('verify_failure_ok');
+        md5_verify($download_path, $package_path)
+            or die <<EOD unless config('verify_failure_ok');
 App-Fetchware: run-time error. You asked fetchware to only try to verify your
 package with md5, but it failed. See the warning above for their error message.
 See perldoc App::Fetchware.
 EOD
-        } default {
-            die <<EOD;
+    } else {
+        die <<EOD;
 App-Fetchware: run-time error. Your fetchware file specified a wrong
 verify_method option. The only supported types are 'gpg', 'sha', 'md5', but you
 specified [@{[config('verify_method')]}]. See perldoc App::Fetchware.
 EOD
-        }
     }
     msg 'Verification succeeded.';
 }
@@ -1453,26 +1436,24 @@ sub list_files {
     # List files based on archive format.
     my $files;
     my $format;
-    given ($package_path) {
-        when(/\.(t(gz|bz|xz|Z))|(tar\.(gz|bz2|xz|Z))|.fpkg$/) {
-            $format = 'tar';
-            vmsg <<EOM;
+    if ($package_path =~ /\.(t(gz|bz|xz|Z))|(tar\.(gz|bz2|xz|Z))|.fpkg$/) {
+        $format = 'tar';
+        vmsg <<EOM;
 Listing files in your tar format archive [$package_path].
 EOM
-            $files = list_files_tar($package_path); 
-        } when (/\.zip$/) {
-            $format = 'zip';
-            vmsg <<EOM;
+        $files = list_files_tar($package_path); 
+    } elsif ($package_path =~ /\.zip$/) {
+        $format = 'zip';
+        vmsg <<EOM;
 Listing files in your zip format archive [$package_path].
 EOM
-            $files = list_files_zip($package_path); 
-        } default {
-            die <<EOD;
+        $files = list_files_zip($package_path); 
+    } else {
+        die <<EOD;
 App-Fetchware: Fetchware failed to determine what type of archive your
 downloaded package is [$package_path]. Fetchware only supports zip and tar
 format archives.
 EOD
-        }
     }
 
     # unarchive_package() needs $format, so return that too.
@@ -1984,7 +1965,7 @@ App::Fetchware - App::Fetchware is Fetchware's API used to make extensions.
 
 =head1 VERSION
 
-version 1.000
+version 1.001
 
 =head1 SYNOPSIS
 
@@ -3639,8 +3620,8 @@ actually exist on your computer.
             export FETCHWARE_HTTP_LOOKUP_URL='http://www.apache.org/dist/httpd/'
             export FETCHWARE_FTP_MIRROR_URL='ftp://carroll.cac.psu.edu/pub/apache/httpd'
             export FETCHWARE_HTTP_MIRROR_URL='http://mirror.cc.columbia.edu/pub/software/apache//httpd/'
-            export FETCHWARE_FTP_DOWNLOAD_URL='ftp://carroll.cac.psu.edu/pub/apache/httpd/httpd-2.2.24.tar.bz2'
-            export FETCHWARE_HTTP_DOWNLOAD_URL='http://apache.mirrors.pair.com//httpd/httpd-2.2.25.tar.bz2'
+            export FETCHWARE_FTP_DOWNLOAD_URL='ftp://carroll.cac.psu.edu/pub/apache/httpd/httpd-2.2.26.tar.bz2'
+            export FETCHWARE_HTTP_DOWNLOAD_URL='http://mirrors.ibiblio.org/apache//httpd/httpd-2.2.26.tar.bz2'
             export FETCHWARE_LOCAL_URL='file:///home/dly/software/httpd-2.2.22.tar.bz2'
             export FETCHWARE_LOCAL_ZIP_URL='file:///home/dly/software/ctags-zip/ctags58.zip'
             export FETCHWARE_LOCAL_BUILD_URL='/home/dly/software/ctags-5.8.tar.gz'
