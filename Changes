@@ -1,5 +1,10 @@
 Revison History for App::Fetchware
 
+1.004     2013-11-23 02:19:58 America/New_York
+    * Attempt to fix bin/fetchware not properly being indexed again :)
+      bin/fetchware was missing a shebang line. This has been fixed. Perhaps
+      this is the snag preventing bin/fetchware from being indexed properly.
+
 1.003     2013-11-23 01:42:54 America/New_York
     * Fix in 1.002 failed to fix bin/fetchware indexing. Going to try giving
       package fetchware; a blank line around itself maybe that will do the

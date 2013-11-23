@@ -236,7 +236,7 @@ App::Fetchware::CreateConfigOptions - Used by fetchware extensions to create the
 
 =head1 VERSION
 
-version 1.003
+version 1.004
 
 =head1 SYNOPSIS
 

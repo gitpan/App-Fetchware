@@ -567,7 +567,7 @@ Test::Fetchware - Provides testing subroutines for App::Fetchware.
 
 =head1 VERSION
 
-version 1.003
+version 1.004
 
 =head1 SYNOPSIS
 

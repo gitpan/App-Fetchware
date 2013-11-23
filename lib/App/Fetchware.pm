@@ -1965,7 +1965,7 @@ App::Fetchware - App::Fetchware is Fetchware's API used to make extensions.
 
 =head1 VERSION
 
-version 1.003
+version 1.004
 
 =head1 SYNOPSIS
 

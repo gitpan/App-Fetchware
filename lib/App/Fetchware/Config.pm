@@ -183,7 +183,7 @@ App::Fetchware::Config - Manages App::Fetchware's internal representation of Fet
 
 =head1 VERSION
 
-version 1.003
+version 1.004
 
 =head1 SYNOPSIS
 
