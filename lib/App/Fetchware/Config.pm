@@ -1,4 +1,7 @@
 package App::Fetchware::Config;
+{
+  $App::Fetchware::Config::VERSION = '1.005';
+}
 # ABSTRACT: Manages App::Fetchware's internal representation of Fetchwarefiles.
 ###BUGALERT### Uses die instead of croak. croak is the preferred way of throwing
 #exceptions in modules. croak says that the caller was the one who caused the
@@ -183,7 +186,7 @@ App::Fetchware::Config - Manages App::Fetchware's internal representation of Fet
 
 =head1 VERSION
 
-version 1.004
+version 1.005
 
 =head1 SYNOPSIS
 

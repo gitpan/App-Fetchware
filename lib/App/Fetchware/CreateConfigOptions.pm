@@ -1,4 +1,7 @@
 package App::Fetchware::CreateConfigOptions;
+{
+  $App::Fetchware::CreateConfigOptions::VERSION = '1.005';
+}
 # ABSTRACT: Used by fetchware extensions to create their configuration options.
 use strict;
 use warnings;
@@ -236,7 +239,7 @@ App::Fetchware::CreateConfigOptions - Used by fetchware extensions to create the
 
 =head1 VERSION
 
-version 1.004
+version 1.005
 
 =head1 SYNOPSIS
 
