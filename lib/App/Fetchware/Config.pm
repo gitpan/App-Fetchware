@@ -1,6 +1,6 @@
 package App::Fetchware::Config;
 {
-  $App::Fetchware::Config::VERSION = '1.005';
+  $App::Fetchware::Config::VERSION = '1.006';
 }
 # ABSTRACT: Manages App::Fetchware's internal representation of Fetchwarefiles.
 ###BUGALERT### Uses die instead of croak. croak is the preferred way of throwing
@@ -186,7 +186,7 @@ App::Fetchware::Config - Manages App::Fetchware's internal representation of Fet
 
 =head1 VERSION
 
-version 1.005
+version 1.006
 
 =head1 SYNOPSIS
 

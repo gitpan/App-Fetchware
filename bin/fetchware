@@ -6,7 +6,7 @@
 
 package fetchware;
 {
-  $fetchware::VERSION = '1.005';
+  $fetchware::VERSION = '1.006';
 }
 
 # ABSTRACT: Fetchware is a package manager for source code distributions.
@@ -2737,7 +2737,7 @@ fetchware - Fetchware is a package manager for source code distributions.
 
 =head1 VERSION
 
-version 1.005
+version 1.006
 
 =head1 SYNOPSIS
 

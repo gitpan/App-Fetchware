@@ -1,6 +1,6 @@
 package App::Fetchware;
 {
-  $App::Fetchware::VERSION = '1.005';
+  $App::Fetchware::VERSION = '1.006';
 }
 # ABSTRACT: App::Fetchware is Fetchware's API used to make extensions.
 ###BUGALERT### Uses die instead of croak. croak is the preferred way of throwing
@@ -1968,7 +1968,7 @@ App::Fetchware - App::Fetchware is Fetchware's API used to make extensions.
 
 =head1 VERSION
 
-version 1.005
+version 1.006
 
 =head1 SYNOPSIS
 

@@ -1,6 +1,6 @@
 package App::Fetchware::ExportAPI;
 {
-  $App::Fetchware::ExportAPI::VERSION = '1.005';
+  $App::Fetchware::ExportAPI::VERSION = '1.006';
 }
 # ABSTRACT: Used by fetchware extensions to export their API subroutines.
 use strict;
@@ -119,11 +119,7 @@ sub _export_api {
             }
         }
     }
-use Test::More;
-note("CALLER[$callers_package_name]");
-note("APISUBS[");
-note explain \%api_subs;
-note("]");
+
     die <<EOD if (grep {$api_subs{$_} == 1} keys %api_subs) != 9;
 App-Fetchware-Util: export_api() must be called with either or both of the KEEP
 and OVERRIDE options, and you must supply the names of all of fetchware's API
@@ -179,7 +175,7 @@ App::Fetchware::ExportAPI - Used by fetchware extensions to export their API sub
 
 =head1 VERSION
 
-version 1.005
+version 1.006
 
 =head1 SYNOPSIS
 
