@@ -1,6 +1,6 @@
 package Test::Fetchware;
 {
-  $Test::Fetchware::VERSION = '1.006';
+  $Test::Fetchware::VERSION = '1.007';
 }
 # ABSTRACT: Provides testing subroutines for App::Fetchware.
 use strict;
@@ -217,6 +217,9 @@ program '$file_name';
 
 # Need to filter out the cruft.
 filter '$file_name';
+
+# Just use MD5 to verify it.
+verify_method 'md5';
 
 EOF
         ,
@@ -450,7 +453,7 @@ sub export_ok{
 
     package main;
 {
-  $main::VERSION = '1.006';
+  $main::VERSION = '1.007';
 }
     my @sorted_subs = sort @$sorted_subs;
     my @sorted_export = sort @$sorted_export;
@@ -573,7 +576,7 @@ Test::Fetchware - Provides testing subroutines for App::Fetchware.
 
 =head1 VERSION
 
-version 1.006
+version 1.007
 
 =head1 SYNOPSIS
 

@@ -1,6 +1,6 @@
 package App::Fetchware;
 {
-  $App::Fetchware::VERSION = '1.006';
+  $App::Fetchware::VERSION = '1.007';
 }
 # ABSTRACT: App::Fetchware is Fetchware's API used to make extensions.
 ###BUGALERT### Uses die instead of croak. croak is the preferred way of throwing
@@ -821,28 +821,53 @@ sub  lookup_by_versionstring {
     # Implement versionstring algorithm.
     my @versionstrings;
     for (my $i = 0; $i <= $#{$file_listing}; $i++) {
-        # Split each filename on *non digits*
-        # And add that as an arrayref to @versionstrings;
-        # And store the index $i, so that we can actually sort $file_listing
-        # later on after sorting @versionstrings.
-        push @versionstrings, [$i,
-            # Use grep to strip leading empty strings (eg: '').
-            (grep {$_ ne ''} split(/\D+/, $file_listing->[$i][0]))]
+        # Split the filename on "Not a numbers", so remove all "not
+        # numbers", but keep a list of things that actually are numbers.
+        my @iversionstring = split(/\D+/, $file_listing->[$i][0]);
+
+        # Use grep to strip leading empty strings (eg: '').
+        @iversionstring = grep {$_ ne ''} @iversionstring;
+
+        if (@iversionstring == 0) {
+            vmsg <<EOM;
+            # Let the usr know we're skipping this filename, but only if they
+            # really want to know (They turned on verbose output.).
+File [$file_listing->[$i][0]] has no version number in it. Ignoring.
+EOM
+            # And also skip adding this @iversionstring to @versionstrings,
+            # because this @iversionstring is empty, and how do I sort an empty
+            # array? Return undef--nope causes "value undef in sort fatal errors
+            # and warnings." Return 0--nope causes a file with no version number
+            # at beginning of listing to stay at listing, and cause fetchware to
+            # fail picking the right version. Return -1--nope, because that's
+            # hackish and lame. Instead, just not include them in the lookup
+            # listing, and if that means that the lookup listing is empty throw
+            # an exception.
+            next;
+        }
+        # Add $i's version string to @versionstrings.
+        push @versionstrings, [$i, @iversionstring];
 
         # And the sort below sorts them into highest number first order.
     }
 
+   die <<EOD if @versionstrings == 0;
+App-Fetchware: The lookup_url your provided [@{[config('lookup_url')]}] does not
+have any filenames with detectable version numbers in them. Fetchware's
+'versionstring' lookup algorithm depends on files having version numbers in them
+such as [httpd-2.2.22.tar.gz] notice the [2.2.22] version number. Fetchware
+failed to find any of those in the lookup_url you provided. Consider a different
+lookup_url or try switching to the default 'timestamp' lookup algorithm adding
+the "lookup_method" configuration option to your Fetchwarefile.
+EOD
+
+   # LIMITATION: The sort block below can not have any undef values in its
+   # input. If there are any, then perl will give a warning about a value being
+   # undef in a sort, if you are not lucky, then it will actually trigger a
+   # fatal error. There are CPAN Testers reports with this problem, so it really
+   # can happen. But you do not have to worry about this, because the for loop
+   # above that creates @versionstrings 
     @versionstrings = sort {
-        # Return undef for filenames that don't have numbers in them, because
-        # without those numbers I can't actually sort them. It's really awesome
-        # and convienient that perl's sort does not explode or throw an
-        # exception when your custom sort subroutine returns undef instead of
-        # -1, 0, or 1, because without those numbers I can't actually sort them.
-        # It's really awesome and convienient that perl's sort does not explode
-        # or throw an exception when your custom sort subroutine returns undef
-        # instead of -1, 0, or 1.
-        return if $#{$a} < 2;
-        return if $#{$b} < 2;
         # Figure out whoose ($b or $a) is larger and set $last_index to it.
         my $last_index;
         if ($#{$b} > $#{$a}) {
@@ -1968,7 +1993,7 @@ App::Fetchware - App::Fetchware is Fetchware's API used to make extensions.
 
 =head1 VERSION
 
-version 1.006
+version 1.007
 
 =head1 SYNOPSIS
 
@@ -2620,7 +2645,7 @@ cannot be verified. The availabel options are:
 
 =item sha1 - Uses the SHA-1 hash function to verify the integrity of the download. This is much less secure than gpg.
 
-=item sha1 - Uses the MD5 hash function to verify the integrity of the download. This is much less secure than gpg.
+=item md5 - Uses the MD5 hash function to verify the integrity of the download. This is much less secure than gpg.
 
 =back
 
@@ -3972,6 +3997,11 @@ cleverly C<split>ing the filenames (the first value of the array of arrays
 input, $filename_listing) on C</\D+/>, which will return a list of version
 numbers. Then, the cleverly splitted filename is pushed on to the input array,
 and then the array is sorted based on this new value using a custom sort block.
+
+lookup_by_versionstring() also discards any entries from $filename_listing that
+do not have a version number in them, because without version numbers that entry
+can not be sorted properly. And if it is left in, it could confuse fetchware
+into figuring out the correct download path.
 
 Also note, that both $filename_listing and lookup_by_versionstring()'s return
 value, $sorted_filename_listing, B<must> both be arrayrefs of arrays. That is a
