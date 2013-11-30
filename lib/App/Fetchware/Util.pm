@@ -1,6 +1,6 @@
 package App::Fetchware::Util;
 {
-  $App::Fetchware::Util::VERSION = '1.007';
+  $App::Fetchware::Util::VERSION = '1.008';
 }
 # ABSTRACT: Miscelaneous functions for App::Fetchware.
 ###BUGALERT### Uses die instead of croak. croak is the preferred way of throwing
@@ -1148,8 +1148,7 @@ EOD
         for ( scalar fork ) {
             # Fork failed.
             # defined() operates on default variable, $_.
-            #if (not defined $_) {
-            if ($_ eq undef) {
+            if (not defined $_) {
                 die <<EOD;
 App-Fetchware-Util: Fork failed! This shouldn't happen!?! Os error [$!].
 EOD
@@ -1526,7 +1525,7 @@ App::Fetchware::Util - Miscelaneous functions for App::Fetchware.
 
 =head1 VERSION
 
-version 1.007
+version 1.008
 
 =head1 SYNOPSIS
 

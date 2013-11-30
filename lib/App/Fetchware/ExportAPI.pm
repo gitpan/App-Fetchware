@@ -1,6 +1,6 @@
 package App::Fetchware::ExportAPI;
 {
-  $App::Fetchware::ExportAPI::VERSION = '1.007';
+  $App::Fetchware::ExportAPI::VERSION = '1.008';
 }
 # ABSTRACT: Used by fetchware extensions to export their API subroutines.
 use strict;
@@ -175,7 +175,7 @@ App::Fetchware::ExportAPI - Used by fetchware extensions to export their API sub
 
 =head1 VERSION
 
-version 1.007
+version 1.008
 
 =head1 SYNOPSIS
 

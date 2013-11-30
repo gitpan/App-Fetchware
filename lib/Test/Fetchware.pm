@@ -1,6 +1,6 @@
 package Test::Fetchware;
 {
-  $Test::Fetchware::VERSION = '1.007';
+  $Test::Fetchware::VERSION = '1.008';
 }
 # ABSTRACT: Provides testing subroutines for App::Fetchware.
 use strict;
@@ -453,7 +453,7 @@ sub export_ok{
 
     package main;
 {
-  $main::VERSION = '1.007';
+  $main::VERSION = '1.008';
 }
     my @sorted_subs = sort @$sorted_subs;
     my @sorted_export = sort @$sorted_export;
@@ -576,7 +576,7 @@ Test::Fetchware - Provides testing subroutines for App::Fetchware.
 
 =head1 VERSION
 
-version 1.007
+version 1.008
 
 =head1 SYNOPSIS
 

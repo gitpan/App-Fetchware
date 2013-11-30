@@ -6,7 +6,7 @@
 
 package fetchware;
 {
-  $fetchware::VERSION = '1.007';
+  $fetchware::VERSION = '1.008';
 }
 
 # ABSTRACT: Fetchware is a package manager for source code distributions.
@@ -91,6 +91,8 @@ our $dry_run = 0;
 
 # Be a modulino, so I can "use fetchware" in my test suite, so I can test
 # bin/fetchware normally like any other perl module.
+###BUGALERT## Add a test suite for run(), and also one that directly calls
+#bin/fetchware to test its command line options.
 run() unless caller();
 
 sub run {
@@ -164,21 +166,21 @@ EOM
         vmsg 'Determining which command to run based on command line options.';
         my $command = shift @ARGV;
         if ($command eq 'install') {
-            cmd_install($command eq @ARGV);
+            cmd_install(@ARGV);
         } elsif ($command eq 'uninstall') {
-            cmd_uninstall($command eq @ARGV);
+            cmd_uninstall(@ARGV);
         } elsif ($command eq 'new') {
-            cmd_new($command eq @ARGV);
+            cmd_new(@ARGV);
         } elsif ($command eq 'upgrade') {
-            cmd_upgrade($command eq @ARGV);
+            cmd_upgrade(@ARGV);
         } elsif ($command eq 'upgrade-all') {
-            cmd_upgrade_all($command eq @ARGV);
+            cmd_upgrade_all(@ARGV);
         } elsif ($command eq 'list') {
-            cmd_list($command eq @ARGV);
+            cmd_list(@ARGV);
         } elsif ($command eq 'look') {
-            cmd_look($command eq @ARGV);
+            cmd_look(@ARGV);
         } elsif ($command eq 'clean') {
-            cmd_clean($command eq @ARGV);
+            cmd_clean(@ARGV);
         } elsif ($command eq 'help') {
             cmd_help(@ARGV);
         } else {
@@ -1734,9 +1736,10 @@ EOM
         # Get a name for the Fetchwarefile that does not already exist.
         if (-e $fetchwarefile_filename) {
             while (1) {
-                $fetchwarefile_filename = $term->get_reply(prompt => <<EOP,
-What would you like your new Fetchwarefile's filename to be? 
-EOP                 
+                $fetchwarefile_filename = $term->get_reply(
+                    prompt => <<EOP,
+What would you like your new Fetchwarefile's filename to be?
+EOP
                     print_me => <<EOP
 Fetchware by default uses the program name you specified at the beginning of
 running fetchware new plus a '.Fetchwarefile' extension to name your
@@ -2737,7 +2740,7 @@ fetchware - Fetchware is a package manager for source code distributions.
 
 =head1 VERSION
 
-version 1.007
+version 1.008
 
 =head1 SYNOPSIS
 
