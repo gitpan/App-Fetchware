@@ -6,7 +6,7 @@
 
 package fetchware;
 {
-  $fetchware::VERSION = '1.008';
+  $fetchware::VERSION = '1.009';
 }
 
 # ABSTRACT: Fetchware is a package manager for source code distributions.
@@ -81,6 +81,7 @@ our %EXPORT_TAGS  = (
         edit_manually
         check_fetchwarefile
         ask_to_install_now_to_test_fetchwarefile
+        run
     )]
 );
 our @EXPORT_OK = @{$EXPORT_TAGS{TESTING}};
@@ -139,8 +140,8 @@ EOM
         # $VERSION is managed by dzil; therefore, I use eval to access it at
         # run time instead of compile time, so that I can test fetchware without
         # running dzil test.
-        'version|V' => sub { eval 'say "Fetchware version $VERSION"; '; exit 0},
-        'help|h|?' => \&help,
+        'version|V' => sub { eval 'say "Fetchware version $fetchware::VERSION"; '; exit 0},
+        'help|h|?' => \&cmd_help,
         'verbose|v' => \$verbose,
         'quiet|q' => \$quiet,
         ###BUGALERT### dry-run functionality is *not* implemented!!!
@@ -164,7 +165,7 @@ EOM
         # tell the user that they can clean it up with fetchware clean??
         # Also, add cmdline options to control what to do when this happens???
         vmsg 'Determining which command to run based on command line options.';
-        my $command = shift @ARGV;
+        my $command = shift @ARGV // 'defined but not an actual command';
         if ($command eq 'install') {
             cmd_install(@ARGV);
         } elsif ($command eq 'uninstall') {
@@ -363,7 +364,7 @@ EOM
             =
             extract_fetchwarefile($fetchware_package_path, cwd());
         vmsg <<EOM;
-Extracting out Fetchwarefile from [$fetchware_package_path] to [$fetchwarefile]
+Extracting out Fetchwarefile from [$fetchware_package_path] to [$$fetchwarefile]
 EOM
     } else {
         die <<EOD;
@@ -378,7 +379,7 @@ EOD
     # to the imported subroutines and modified fetchware configuration (%CONFIG)
     # just as the child does.
     parse_fetchwarefile($fetchwarefile);
-    vmsg "Parsed Fetchwarefile [$fetchwarefile].";
+    vmsg "Parsed Fetchwarefile [$$fetchwarefile].";
 
     # start() runs as root before the fork, because it uses
     # App::Fetchware::Util's create_tempdir() to create a $temp_dir. This
@@ -1815,7 +1816,7 @@ EOD
     # to the imported subroutines and modified fetchware configuration (%CONFIG)
     # just as the child does.
     parse_fetchwarefile($fetchwarefile);
-    vmsg "Parsed Fetchwarefile [$fetchwarefile].";
+    vmsg "Parsed Fetchwarefile [$$fetchwarefile].";
 
     # start() runs as root before the fork, because it uses
     # App::Fetchware::Util's create_tempdir() to create a $temp_dir. This
@@ -1942,8 +1943,8 @@ EOM
         # name that would support multiple versions being in the fetchware
         # package database at the same time.
         ###BUGALERT### The above Note is a ridiculous bug. Fix it!
-        vmsg 'Uninstalled the old fetchware package from the fetchware database.';
         uninstall_fetchware_package_from_database($fetchware_package_path);
+        vmsg 'Uninstalled the old fetchware package from the fetchware database.';
 
         my $installed_fetchware_package_path
             = copy_fpkg_to_fpkg_database($updated_fetchware_package_path);
@@ -2043,7 +2044,7 @@ sub cmd_look {
     if ($filename =~ /\.fpkg$/) {
         $fetchwarefile = extract_fetchwarefile($filename);
         vmsg <<EOM;
-Extracting out Fetchwarefile from [$filename] to [$fetchwarefile]
+Extracting out Fetchwarefile from [$filename] to [$$fetchwarefile]
 EOM
     } else {
         my $fh = safe_open($filename, <<EOD);
@@ -2054,14 +2055,14 @@ EOD
         # Add a \ to turn the slurped scalar into a scalar ref for calling
         # parse_fetchwarefile() properly.
         $fetchwarefile = \do {local $/; <$fh>};
-        vmsg  "Slurped [$filename] into fetchware: [$fetchwarefile]";
+        vmsg  "Slurped [$filename] into fetchware: [$$fetchwarefile]";
     }
 
     # Must parse the Fetchwarefile in the parent, so that the parent has access
     # to the imported subroutines and modified fetchware configuration (%CONFIG)
     # just as the child does.
     parse_fetchwarefile($fetchwarefile);
-    vmsg "Parsed Fetchwarefile [$fetchwarefile].";
+    vmsg "Parsed Fetchwarefile [$$fetchwarefile].";
 
     # start() runs as root before the fork, because it uses
     # App::Fetchware::Util's create_tempdir() to create a $temp_dir. This
@@ -2313,7 +2314,6 @@ EOM
 
 sub cmd_help {
 	print <<'HELP';
-
 fetchware is a package manager for source code distributions. It gives you the
 ability to install, uninstall, and even upgrade your source code distributions
 just like you can with your binary packages using yum, apt-get, or slackpkg.
@@ -2326,28 +2326,28 @@ exceed the ability of fetchware's q&a configuration see perldoc App::Fetchware
 for instructions on manual Fetchwarefile configuration.
 
 USAGE:
-	fetchware new|install|uninstall|upgrade|upgrade-all|list|look|clean|help
-		[--help|-h|-?|--version|-V|--verbose|-v|--quiet|-q]
-		package-name
+    fetchware new|install|uninstall|upgrade|upgrade-all|list|look|clean|help
+        --help|-h|-?|--version|-V|--verbose|-v|--quiet|-q]
+        package-name
 
 COMMANDS:
     new - creates a new Fetchwarefile for use with fetchware.
-	install - installs a fetchware package, which is a .tar.gz ending with
-		.fpkg, which includes the source code distribution unmodified,
-		but with an included Fetchwarefile. See perldoc fetchware.
-	uninstall - uninstalls a fetchware package.
-	upgrade - upgrades a fetchware package if a newer version is available.
-	upgrade-all - upgrades *all* installed fetchware packages.
+    install - installs a fetchware package, which is a .tar.gz ending with
+        .fpkg, which includes the source code distribution unmodified,
+        but with an included Fetchwarefile. See perldoc fetchware.
+    uninstall - uninstalls a fetchware package.
+    upgrade - upgrades a fetchware package if a newer version is available.
+    upgrade-all - upgrades *all* installed fetchware packages.
     list - lists all installed fetchware packages.
     look - downloads and unarchives a fetchware package for viewing.
     clean - deletes any left over messes caused by fetchware in your tempdir.
-	help - prints this help message
+    help - prints this help message
 OPTIONS:
-	--help|-h|-? - prints this help message.
-	--version|-V - prints a version message.
-	--verbose|-v - prints additional logging information.
-	--quiet|-q - prints *no* logging invormation. Determine success or
-		failure with fetchware's exit status. 0 = success. Non-zero = failure.
+    --help|-h|-? - prints this help message.
+    --version|-V - prints a version message.
+    --verbose|-v - prints additional logging information.
+    --quiet|-q - prints *no* logging invormation. Determine success or
+        failure with fetchware's exit status. 0 = success. Non-zero = failure.
 
 For more information see perldoc fetchware and perldoc App::Fetchware.
 HELP
@@ -2740,7 +2740,7 @@ fetchware - Fetchware is a package manager for source code distributions.
 
 =head1 VERSION
 
-version 1.008
+version 1.009
 
 =head1 SYNOPSIS
 
@@ -3806,7 +3806,7 @@ Returns the full path of the copied fetchware package.
 
 =head2 uninstall_fetchware_package_from_database()
 
-    my uninstall_fetchware_package_from_database($uninstall_package_name);
+    uninstall_fetchware_package_from_database($uninstall_package_name);
 
 Deletes the specified $uninstall_package_name from the fetchware package
 database. Throws an exception on error.

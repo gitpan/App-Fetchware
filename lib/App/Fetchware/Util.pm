@@ -1,6 +1,6 @@
 package App::Fetchware::Util;
 {
-  $App::Fetchware::Util::VERSION = '1.008';
+  $App::Fetchware::Util::VERSION = '1.009';
 }
 # ABSTRACT: Miscelaneous functions for App::Fetchware.
 ###BUGALERT### Uses die instead of croak. croak is the preferred way of throwing
@@ -411,12 +411,17 @@ sub http_download_dirlist {
     ###BUGALERT### Should use request() instead of get, because request can
     #directly write the chunks of the file to disk as they are downloaded. get()
     #just uses RAM, so a 50Meg file takes up 50 megs of ram, and so on.
+    ###BUGALERT### Also, if you use request instead, and get chunks of bytes
+    #instead of just writing them to disk, you could also use a
+    #Term::ProgressBar to print a cool progress bar during the download!
+    #This could also be added to the ftp downloaders too, but probably not the
+    #local file:// downloaders though.
     my $response = $http->get($http_url);
 
     die <<EOD unless $response->{success};
 App-Fetchware: run-time error. HTTP::Tiny failed to download a directory listing
 of your provided lookup_url. HTTP status code [$response->{status} $response->{reason}]
-HTTP headers [@{[Data::Dumper::Dumper($response->{headers})]}].
+HTTP headers [@{[Data::Dumper::Dumper($response)]}].
 See man App::Fetchware.
 EOD
 
@@ -1525,7 +1530,7 @@ App::Fetchware::Util - Miscelaneous functions for App::Fetchware.
 
 =head1 VERSION
 
-version 1.008
+version 1.009
 
 =head1 SYNOPSIS
 
@@ -1675,16 +1680,13 @@ even if you provide an already split up list of arguments to run_prog().
 
 =head2 Executing external commands without using run_prog()
 
-Subify the -q checking code, and paste it below, and tell users to use that if
-they want to use something else, and document the $fetchware::quiet variable for
-other users too.
-
 msg(), vmsg(), and run_prog() determine if -v and if -q were specified by
 checking the values of the global variables listed below:
 
 =over
 
 =item * $fetchware::quiet - is C<0> if -q was B<not> specified.
+
 =item * $fetchware::verbose - is C<0> if -v was B<not> specified.
 
 =back

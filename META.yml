@@ -33,4 +33,4 @@ requires:
 resources:
   bugtracker: https://github.com/deeelwy/Fetchware/issues
   repository: https://github.com/deeelwy/Fetchware.git
-version: 1.008
+version: 1.009

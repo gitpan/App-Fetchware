@@ -32,6 +32,7 @@ t/Test-Fetchware.t
 t/author-critic.t
 t/bin-fetchware-Fetchwarefile.t
 t/bin-fetchware-clean.t
+t/bin-fetchware-command-line.t
 t/bin-fetchware-install.t
 t/bin-fetchware-list.t
 t/bin-fetchware-look.t
@@ -43,6 +44,7 @@ t/bin-fetchware-new-filter_option
 t/bin-fetchware-new-mandatory_options
 t/bin-fetchware-new-prompt_for_other_options
 t/bin-fetchware-new.t
+t/bin-fetchware-run.t
 t/bin-fetchware-uninstall.t
 t/bin-fetchware-upgrade-all.t
 t/bin-fetchware-upgrade.t

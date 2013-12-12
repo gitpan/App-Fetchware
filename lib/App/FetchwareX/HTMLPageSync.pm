@@ -1,6 +1,6 @@
 package App::FetchwareX::HTMLPageSync;
 {
-  $App::FetchwareX::HTMLPageSync::VERSION = '1.008';
+  $App::FetchwareX::HTMLPageSync::VERSION = '1.009';
 }
 # ABSTRACT: An App::Fetchware extension that downloads files based on an HTML page.
 use strict;
@@ -347,7 +347,7 @@ App::FetchwareX::HTMLPageSync - An App::Fetchware extension that downloads files
 
 =head1 VERSION
 
-version 1.008
+version 1.009
 
 =head1 SYNOPSIS
 
