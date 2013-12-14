@@ -1,6 +1,6 @@
 package App::Fetchware::Util;
 {
-  $App::Fetchware::Util::VERSION = '1.009';
+  $App::Fetchware::Util::VERSION = '1.010';
 }
 # ABSTRACT: Miscelaneous functions for App::Fetchware.
 ###BUGALERT### Uses die instead of croak. croak is the preferred way of throwing
@@ -1530,7 +1530,7 @@ App::Fetchware::Util - Miscelaneous functions for App::Fetchware.
 
 =head1 VERSION
 
-version 1.009
+version 1.010
 
 =head1 SYNOPSIS
 

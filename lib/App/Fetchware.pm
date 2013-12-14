@@ -1,6 +1,6 @@
 package App::Fetchware;
 {
-  $App::Fetchware::VERSION = '1.009';
+  $App::Fetchware::VERSION = '1.010';
 }
 # ABSTRACT: App::Fetchware is Fetchware's API used to make extensions.
 ###BUGALERT### Uses die instead of croak. croak is the preferred way of throwing
@@ -645,15 +645,16 @@ sub determine_download_path {
         for my $listing (@$ftp_listing) {
             # Example Net::FTP->dir() output.
             #drwxrwsr-x   49 200      200          4096 Oct 05 14:27 patches
+            #     0       1  2         3             4   5  6    7     8
             my @fields = split /\s+/, $listing;
             # Test & try it???  Probaby won't work.
             #my ($month, $day, $year_or_time, $filename) = ( split /\s+/, $listing )[-4--1];
             $filename = $fields[-1];
             #month       #day        #year
-            #"$fields[-4] $fields[-3] $fields[-2]";
-            my $month = $fields[-4];
-            my $day = $fields[-3];
-            my $year_or_time = $fields[-2];
+            #"$fields[6] $fields[7] $fields[8]";
+            my $month = $fields[5];
+            my $day = $fields[6];
+            my $year_or_time = $fields[7];
 
             # Normalize timestamp format.
             # It's a time.
@@ -661,13 +662,11 @@ sub determine_download_path {
                 # the $month{} hash access replaces text months with numerical
                 # ones.
                 $year_or_time =~ s/://; # Make 12:00 1200 for numerical sort.
-                #DELME$fl->[1] = "9999$month{$timestamp[0]}$timestamp[1]$timestamp[2]";
                 $timestamp = "9999$month{$month}$day$year_or_time";
                 # It's a year.
             } elsif ($year_or_time =~ /\d\d\d\d/) {
                 # the $month{} hash access replaces text months with numerical
                 # ones.
-                #DELME$fl->[1] = "$timestamp[2]$month{$timestamp[0]}$timestamp[1]0000";
                 $timestamp = "$year_or_time$month{$month}${day}0000";
             }
             push @filename_listing, [$filename, $timestamp];
@@ -1403,21 +1402,30 @@ App-Fetchware: run-time error. Fetchware failed to open the $digest_type file it
 downloaded while trying to read it in order to check its $digest_type sum. The file was
 [$digest_file]. See perldoc App::Fetchware.
 EOD
-    # Will only check the first md5sum it finds.
+    # Will only check the first checksum it finds.
     while (<$digest_fh>) {
         next if /^\s+$/; # skip whitespace only lines just in case.
         my @fields = split ' '; # Defaults to $_, which is filled in by <>
 
-        if ($fields[0] eq $calculated_digest) {
+        # Search the @fields for a regex that is either 32 hex for md5 or 40 hex
+        # for sha1.
+        my ($checksum) = grep /^[0-9a-f]{32}(?:[0-9a-f]{8})?$/i, @fields;
+
+        # Skip trying to verify the $checksum if we failed to find it in this
+        # line, and instead skip to the next line in the checksum file to try to
+        # find a $checksum.
+        next unless defined $checksum;
+
+        if ($checksum eq $calculated_digest) {
             return 'Package verified';
         # Sometimes a = is appended to make it 32bits.
-        } elsif ("$fields[0]=" eq $calculated_digest) {
+        } elsif ("$checksum=" eq $calculated_digest) {
             return 'Package verified';
         }
     }
     close $digest_fh;
 
-    # Return failure, because fetchware failed to verify by md5sum
+    # Return failure, because fetchware failed to verify by checksum
     return undef;
 }
 
@@ -1993,7 +2001,7 @@ App::Fetchware - App::Fetchware is Fetchware's API used to make extensions.
 
 =head1 VERSION
 
-version 1.009
+version 1.010
 
 =head1 SYNOPSIS
 

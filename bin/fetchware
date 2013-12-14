@@ -6,7 +6,7 @@
 
 package fetchware;
 {
-  $fetchware::VERSION = '1.009';
+  $fetchware::VERSION = '1.010';
 }
 
 # ABSTRACT: Fetchware is a package manager for source code distributions.
@@ -165,7 +165,8 @@ EOM
         # tell the user that they can clean it up with fetchware clean??
         # Also, add cmdline options to control what to do when this happens???
         vmsg 'Determining which command to run based on command line options.';
-        my $command = shift @ARGV // 'defined but not an actual command';
+        my $command;
+        @ARGV ? ($command = shift @ARGV) : ($command = 0);
         if ($command eq 'install') {
             cmd_install(@ARGV);
         } elsif ($command eq 'uninstall') {
@@ -2740,7 +2741,7 @@ fetchware - Fetchware is a package manager for source code distributions.
 
 =head1 VERSION
 
-version 1.009
+version 1.010
 
 =head1 SYNOPSIS
 
