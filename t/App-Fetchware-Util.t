@@ -72,9 +72,6 @@ subtest 'UTIL export what they should' => sub {
 };
 
 
-###BUGALERT###Need to add tests for :TESTING exports & specifc subtests for eval_ok(),
-# skip_all_unless_release_testing(), and clear_CONFIG().
-
 
 subtest 'test ftp_download_dirlist()' => sub {
     skip_all_unless_release_testing();

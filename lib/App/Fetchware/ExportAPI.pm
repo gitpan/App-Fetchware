@@ -1,7 +1,5 @@
 package App::Fetchware::ExportAPI;
-{
-  $App::Fetchware::ExportAPI::VERSION = '1.010';
-}
+$App::Fetchware::ExportAPI::VERSION = '1.011';
 # ABSTRACT: Used by fetchware extensions to export their API subroutines.
 use strict;
 use warnings;
@@ -42,52 +40,8 @@ sub import {
 }
 
 
-# Make _export_api() "invisible." users should only ever actually use import(),
-# and technically they should never even use import; instead, they should just
-# use ExportAPI, and Perl will call import() for them.
-#=head2 _export_api()
-#
-#    # Keep App::Fetchware's start() and end() API subroutines, but override the
-#    # other ones.
-#    _export_api(KEEP => [qw(start end)],
-#        OVERRIDE =>
-#        [qw(lookup download verify unarchive build install uninstall)]
-#    );
-#
-#    # YOu can specify NOIMPORT => 1 to avoid the creation of any "KEEP"
-#    # App::Fetchware configuration options.
-#    _export_api(KEEP => [qw(start end)],
-#        0VERRIDE =
-#            [qw(lookup download verify unarchive build install uninstall)]
-#        NOIMPORT => 1;
-#    );
-#
-#
-#Adds fetchware's API subroutines (start(), lookup(), download(), verify(),
-#unarchive(), build(), install(), and uninstall()) to the caller()'s  @EXPORT.
-#Used by fetchware extensions to easily add fetchware's API subroutines to your
-#extension's package exports.
-#
-#=over
-#
-#=item WARNING
-#
-#_export_api() also imports Exporter's import() method into its
-#$callers_package_name. This is absolutely required, because when a user's
-#Fetchwarefile is parsed it is the C<use App::Fetchware::[extensionname];> line
-#that imports fetchware's API subrotines into fetchware's namespace so its
-#internals can call the correct fetchware extension. This mechanism simply uses
-#Exporter's import() method for the heavy lifting, so _export_api() B<must> also
-#ensure that its caller gets a proper import() method.
-#
-#If no import() method is in your fetchware extension, then fetchware will fail
-#to parse any Fetchwarefile's that use your fetchware extension, but this error
-#is caught with an appropriate error message.
-#
-#=back
-#
-#=cut
-
+# _export_api() has pretty much the same documentation as import() above, and
+# why copy and paste any changes I make, when this not here makes more sense?
 sub _export_api {
     my ($callers_package_name, %opts) = @_;
 
@@ -98,6 +52,9 @@ sub _export_api {
     clone(import => (from => 'Exporter', to => $callers_package_name));
 
     my %api_subs = (
+        check_syntax => 0,
+        new => 0,
+        new_install => 0,
         start => 0,
         lookup => 0,
         download => 0,
@@ -105,25 +62,34 @@ sub _export_api {
         unarchive => 0,
         build => 0,
         install => 0,
+        end => 0,
         uninstall => 0,
-        end => 0
+        upgrade => 0,
     );
 
     # Check %opts for correctness.
     for my $sub_type (@opts{qw(KEEP OVERRIDE)}) {
         # Skip KEEP or OVERRIDE if it does not exist.
+        # Needed, because the obove hash slice access will create it if it does
+        # not already exist.
         next unless defined $sub_type;
         for my $sub (@{$sub_type}) {
             if (exists $api_subs{$sub}) {
                 $api_subs{$sub}++;
-            }
+            } 
         }
     }
 
-    die <<EOD if (grep {$api_subs{$_} == 1} keys %api_subs) != 9;
-App-Fetchware-Util: export_api() must be called with either or both of the KEEP
-and OVERRIDE options, and you must supply the names of all of fetchware's API
-subroutines to either one of these 2 options.
+    # Use (scalar keys %api_subs) to dynamically determine how many API subs
+    # there are. I've implemented all of the ones that I've planned, but another
+    # upgrade() or check_syntax() could come out of now where, so calculate how
+    # many there are dynamically, and then I only have to remember to update
+    # %api_subs; instead, of that and also incrementing a constant integer
+    # that's now properly a constant.
+    die <<EOD if (grep {$api_subs{$_} == 1} keys %api_subs) != (scalar keys %api_subs);
+App-Fetchware-ExportAPI: _export_api() or import() must be called with either or
+both of the KEEP and OVERRIDE options, and you must supply the names of all of
+fetchware's API subroutines to either one of these 2 options.
 EOD
 
     # Import any KEEP subs from App::Fetchware.
@@ -167,6 +133,8 @@ EOD
 
 1;
 
+__END__
+
 =pod
 
 =head1 NAME
@@ -175,13 +143,14 @@ App::Fetchware::ExportAPI - Used by fetchware extensions to export their API sub
 
 =head1 VERSION
 
-version 1.010
+version 1.011
 
 =head1 SYNOPSIS
 
-    use App::Fetchware::ExportAPI KEEP => [qw(start end)],
+    use App::Fetchware::ExportAPI KEEP => [qw(start end new_install)],
         OVERRIDE =>
-            [qw(lookup download verify unarchive build install uninstall)];
+            [qw(new lookup download verify unarchive build install uninstall
+            upgrade check_syntax)];
 
 =head1 DESCRIPTION
 
@@ -197,7 +166,7 @@ extension.
 
 App::Fetchware::ExportAPI (ExportAPI) has only one user-servicable part--it's
 import() method. It works just like L<Exporter>'s import() method except it
-takes arguments differently, and checks it's arguments more thuroughly.
+takes arguments differently, and checks it's arguments more thoroughly.
 
 It's import() method is what does the heavy lifting of actually importing any
 "inherited" Fetchware API subroutines from App::Fetchware, and also setting up
@@ -221,19 +190,32 @@ subroutines.
         );
     }
 
-Adds fetchware's API subroutines (start(), lookup(), download(), verify(),
-unarchive(), build(), install(), and uninstall()) to the caller()'s  @EXPORT.
-It also imports L<Exporter>'s import() subroutine to the caller's package, so
-that the caller has a proper import() subroutine that Perl will use when someone
-uses your fetchware extension in their fetchware extension. Used by fetchware
-extensions to easily add fetchware's API subroutines to your extension's package
-exports.
+Adds fetchware's API subroutines (new(), new_install(), check_syntax(), start(),
+lookup(), download(), verify(), unarchive(), build(), install(), end(),
+uninstall(), and upgrade()) to the caller()'s  @EXPORT.  It also imports
+L<Exporter>'s import() subroutine to the caller's package, so that the caller 
+as a proper import() subroutine that Perl will use when someone uses your
+fetchware extension in their fetchware extension. Used by fetchware extensions
+to easily add fetchware's API subroutines to your extension's package exports.
 
-This is how fetchware extensions I<inherit> whatever API subroutines that they
-want to reuse from App::Fetchware.
+The C<KEEP> type is how fetchware extensions I<inherit> whatever API subroutines that they
+want to reuse from App::Fetchware, while C<OVERRIDE> specifies which API
+subroutines this Fetchware extension will implement itself or "override".
 
 Normally, you don't actually call import(); instead, you call it implicity by
 simply use()ing it.
+
+=over
+
+=item NOTE
+
+All API subroutines that exist in App::Fetchware's API must be mentioned in the
+call to import (or implicitly via use). You do not have to OVERRIDE them all,
+but those that you do not OVERRRIDE must be mentioned in KEEP. The KEEP tag does
+not cause import() to actually do anything with them, but they nevertheless must
+be mentioned. 
+
+=back
 
 =over
 
@@ -244,7 +226,7 @@ $callers_package_name. This is absolutely required, because when a user's
 Fetchwarefile is parsed it is the C<use App::Fetchware::[extensionname];> line
 that imports fetchware's API subrotines into fetchware's namespace so its
 internals can call the correct fetchware extension. This mechanism simply uses
-Exporter's import() method for the heavy lifting, so _export_api() B<must> also
+Exporter's import() method for the heavy lifting, so import() B<must> also
 ensure that its caller gets a proper import() method.
 
 If no import() method is in your fetchware extension, then fetchware will fail
@@ -256,7 +238,7 @@ is caught with an appropriate error message.
 =head1 ERRORS
 
 As with the rest of App::Fetchware, App::Fetchware::ExportAPI does not return 
-ny error codes; instead, all errors are die()'d if it's Test::Fetchware's error,
+any error codes; instead, all errors are die()'d if it's Test::Fetchware's error,
 or croak()'d if its the caller's fault.
 
 =head1 AUTHOR
@@ -271,19 +253,3 @@ This is free software; you can redistribute it and/or modify it under
 the same terms as the Perl 5 programming language system itself.
 
 =cut
-
-__END__
-
-
-
-
-
-##TODO##=head1 DIAGNOSTICS
-##TODO##
-##TODO##App::Fetchware throws many exceptions. These exceptions are not listed below,
-##TODO##because I have not yet added additional information explaining them. This is
-##TODO##because fetchware throws very verbose error messages that don't need extra
-##TODO##explanation. This section is reserved for when I have to actually add further
-##TODO##information regarding one of these exceptions.
-##TODO##
-##TODO##=cut

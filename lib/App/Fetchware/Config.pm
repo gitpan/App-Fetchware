@@ -1,7 +1,5 @@
 package App::Fetchware::Config;
-{
-  $App::Fetchware::Config::VERSION = '1.010';
-}
+$App::Fetchware::Config::VERSION = '1.011';
 # ABSTRACT: Manages App::Fetchware's internal representation of Fetchwarefiles.
 ###BUGALERT### Uses die instead of croak. croak is the preferred way of throwing
 #exceptions in modules. croak says that the caller was the one who caused the
@@ -186,7 +184,7 @@ App::Fetchware::Config - Manages App::Fetchware's internal representation of Fet
 
 =head1 VERSION
 
-version 1.010
+version 1.011
 
 =head1 SYNOPSIS
 
@@ -271,7 +269,7 @@ element of %CONFIG to be promoted to being an C<ARRAY> ref.
         # Next iteration will "kick" the iterator again
     }
 
-config_iter() returns an iterator. An iterator is simply subroutine reference
+config_iter() returns an iterator. An iterator is simply a subroutine reference
 that when called (ex: C<$mirror_iter-E<gt>()>) will return the next value. And
 the coolest part is that the iterator will keep track of where it is in the list
 of values that configuration option has itself, so you don't have to yourself.
@@ -284,8 +282,13 @@ the internal array reference the iterator will return false (undef).
 
     config_replace($name, $value);
 
-Replaces $name with $value. If C<scalar @_> > 2, then config_replace() will
-replace $name with $value, and @_[2..$#_].
+    # Supports multiple values and arrays too.
+    config_replace($name, $val1, $val2, $val3);
+    config_replace($name, @values);
+
+Allows you to replace the $value of the specified ($name) existing element of
+the %CONFIG internal hash. It supports multiple values and arrays, and will
+store those multiple values or arrays with an arrayref.
 
 =head2 config_delete()
 
@@ -297,7 +300,8 @@ delete's $name from %CONFIG.
 
     __clear_CONFIG();
 
-Clears the %CONFIG variable that is shared between this subroutine and config().
+Clears the %CONFIG globalish variable. Meant more for use in testing, then for
+use in Fetchware itself, or in Fetchware extensions.
 
 =head2 debug_CONFIG()
 
@@ -309,8 +313,7 @@ Data::Dumper::Dumper()'s %CONFIG and prints it.
 
 As with the rest of App::Fetchware, App::Fetchware::Config does not return any
 error codes; instead, all errors are die()'d if it's App::Fetchware::Config's
-error, or croak()'d if its the caller's fault. These exceptions are simple
-strings, and are listed in the L</DIAGNOSTICS> section below.
+error, or croak()'d if its the caller's fault.
 
 =head1 BUGS 
 
@@ -345,17 +348,5 @@ __END__
 
 
 ###BUGALERT### Actually implement croak or more likely confess() support!!!
-
-
-##TODO##=head1 DIAGNOSTICS
-##TODO##
-##TODO##App::Fetchware throws many exceptions. These exceptions are not listed below,
-##TODO##because I have not yet added additional information explaining them. This is
-##TODO##because fetchware throws very verbose error messages that don't need extra
-##TODO##explanation. This section is reserved for when I have to actually add further
-##TODO##information regarding one of these exceptions.
-##TODO##
-##TODO##=cut
-
 
 

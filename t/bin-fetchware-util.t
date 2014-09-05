@@ -48,6 +48,8 @@ use App::Fetchware;
 program 'who cares';
 
 lookup_url 'http://doesnt.exist/anywhere';
+
+mirror 'http://doesnt.exist/anywhere/either';
 EOF
 
     # Use a scalar ref instead of a real file to avoid having to write and read
@@ -63,6 +65,8 @@ EOF
 program 'who cares';
 
 lookup_url 'http://doesnt.exist/anywhere';
+
+mirror 'http://doesnt.exist/anywhere/either';
 EOS
     eval_ok(sub {parse_fetchwarefile(\$no_use_fetchware)},
         <<EOE, 'checked parse_fetchwarefile() no use fetchware');
@@ -72,6 +76,8 @@ fetchware uses Perl for its configuration file. Your fetchware file was.
 [program 'who cares';
 
 lookup_url 'http://doesnt.exist/anywhere';
+
+mirror 'http://doesnt.exist/anywhere/either';
 ]
 EOE
 
@@ -95,6 +101,8 @@ use App::Fetchware;
 program 'who cares';
 lookup_url 'none://';
 
+mirror 'http://doesnt.exist/anywhere/either';
+
 # Use extra perl code to "delete" some of the API subs to test that they weren't
 # exported.
 use Sub::Mage;
@@ -103,15 +111,8 @@ withdraw('install');
 EOS
 
     eval_ok(sub {parse_fetchwarefile(\$api_subs_exported)},
-        <<EOE, 'checked parse_fetchwarefile() failed to export api subs.');
-fetchware: The App::Fetchware module you choose in your fetchwarefile does not
-properly export the necessary subroutines fetchware needs it to. These include:
-start(), lookup(), download(), verify, unarchive(), build(), install(),
-uninstall(), and end().
-The missing subroutines are [install lookup].
-EOE
-
-
+        qr/fetchware: The App::Fetchware module you choose in your fetchwarefile does not/,
+        'checked parse_fetchwarefile() failed to export api subs.');
 };
 
 

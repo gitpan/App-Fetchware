@@ -1,7 +1,5 @@
 package App::Fetchware::CreateConfigOptions;
-{
-  $App::Fetchware::CreateConfigOptions::VERSION = '1.010';
-}
+$App::Fetchware::CreateConfigOptions::VERSION = '1.011';
 # ABSTRACT: Used by fetchware extensions to create their configuration options.
 use strict;
 use warnings;
@@ -135,14 +133,6 @@ sub import {
 sub _create_config_options {
     my ($callers_package, %opts) = @_;
 
-    # Delete any specified IMPORT config options if the user also specified the
-    # NOIMPORT key.
-    if (exists $opts{NOIMPORT} and defined $opts{NOIMPORT}) {
-        # Also delete NOIMPORT, so it's not mistakenly looped through below.
-        delete @opts{qw(IMPORT NOIMPORT)};
-    }
-    #if it works add error checking or c&p existing error checking!!!
-    ###BUGALERT### Actually add said error checking :)
     for my $value_key (keys %opts) {
         for my $sub_name (@{$opts{$value_key}}) {
 
@@ -239,7 +229,7 @@ App::Fetchware::CreateConfigOptions - Used by fetchware extensions to create the
 
 =head1 VERSION
 
-version 1.010
+version 1.011
 
 =head1 SYNOPSIS
 
@@ -266,9 +256,8 @@ more thuroughly.
 
 =head2 import()
 
-    # import() *must* be called in a BEGIN block, because it
-    # creates subroutines that have prototypes, and prototypes *must* be known
-    # about at compile time not run time!
+    # You don't actually call import() unless you're doing something weird.
+    # Instead, use calls import for you.
     use App::Fetchware::CreateConfigOptions
         ONE => [qw(
             page_name
@@ -314,16 +303,15 @@ additional type:
 =over
 
 =item 5. IMPORT - the C<IMPORT> this hash key does not create new configuration
+
 options, but instead imports already defined ones from App::Fetchware allowing
 you to reuse popular configuration options like C<temp_dir> or C<no_install> in
-your fetchware extension.ou can specify the C<NOIMPORT> option,
-C<import(..., NOIMPORT =E<gt> 1);>, to avoid the automatic
-importing of App::Fetchware configuration options.
+your fetchware extension.
 
 =back
 
 Just use any of C<ONE>, C<ONEARRREF>, C<MANY>, or C<BOOLEAN> as faux hash keys
-being sure to wrap their arguments in a array reference brackets C<[]>
+being sure to wrap their arguments in array reference brackets C<[]>
 
 =over
 
@@ -332,14 +320,15 @@ being sure to wrap their arguments in a array reference brackets C<[]>
 import() creates subroutines that have prototypes, but in order
 for perl to honor those prototypes perl B<must> know about them at compile-time;
 therefore, that is why import() must be called inside a C<BEGIN>
-block.
+block. The best and most obvious way of doing that is use
+C<use App::Fetchware::CreateConfigOptions [options];>.
 
 =back
 
 =head1 ERRORS
 
 As with the rest of App::Fetchware, App::Fetchware::ExportAPI does not return 
-ny error codes; instead, all errors are die()'d if it's Test::Fetchware's error,
+any error codes; instead, all errors are die()'d if it's Test::Fetchware's error,
 or croak()'d if its the caller's fault.
 
 =head1 AUTHOR

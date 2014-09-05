@@ -10,7 +10,7 @@ use diagnostics;
 use 5.010001;
 
 # Test::More version 0.98 is needed for proper subtest support.
-use Test::More 0.98 tests => '13'; #Update if this changes.
+use Test::More 0.98 tests => '12'; #Update if this changes.
 use File::Spec::Functions qw(rel2abs);
 use Test::Deep;
 
@@ -34,7 +34,6 @@ note("App::Fetchware's default imports [@App::Fetchware::EXPORT]");
 
 subtest 'OVERRIDE_LOOKUP exports what it should' => sub {
     my @expected_overide_lookup_exports = qw(
-        check_lookup_config
         get_directory_listing
         parse_directory_listing
         determine_download_path
@@ -56,79 +55,6 @@ subtest 'OVERRIDE_LOOKUP exports what it should' => sub {
 
 
 # Test lookup()'s internal dependencies first in the order they appear.
-
-
-###BUGALERT### Make check_lookup_config() support App::Fetchware "subclasses."
-# Do this by simply adding a syntax_check() subroutine to App::Fetchware's API.
-subtest 'test check_lookup_config()' => sub {
-    # check for when lookup_url is *not* providied.
-    eval_ok(sub {check_lookup_config()}, <<EOS, 'checked check_lookup_config no lookup_url');
-App-Fetchware: run-time syntax error: your Fetchwarefile did not specify a
-lookup_url. lookup_url is a required configuration option, and must be
-specified, because fetchware uses it to located new versions of your program to
-download. See perldoc App::Fetchware
-EOS
-
-    # Call lookup_url 'url' to set the URL for the rest of the tests.
-    lookup_url 'ftp://fake.url';
-
-    # check lookup_method failure.
-    lookup_method 'not-timestamp-or-versionstring';
-    eval_ok(sub {check_lookup_config()}, <<EOS, 'checked check_lookup_config() invalid lookup_method');
-App-Fetchware: run-time syntax error: your Fetchwarefile specified a incorrect
-option to lookup_method. lookup_method only supports the options 'timestamp' and
-'versionstring'. All others are wrong. See man App::Fetchware.
-EOS
-
-    # Now test the other exceptions.
-    config_delete('lookup_method');
-    # must also specify a program name, a mirror, and a way to verify it.
-    # Test no program name.
-    eval_ok(sub {check_lookup_config()},
-        <<EOE, 'checked check_lookup_config() no program');
-App-Fetchware: You failed to specify a [program] configuration option. This
-option is mandatory, and gives the program your Fetchwarefile manages a name.
-Please add a [program 'your program's name here';] configuration option to your
-Fetchwarefile.
-EOE
-    program 'just testing';
-    # Test no mirror.
-    eval_ok(sub {check_lookup_config()},
-        <<EOE, 'checked check_lookup_config() no mirror');
-App-Fetchware: You failed to specify a [mirror] configuration option. This
-option is mandatory, and is used by fetchware to download a new version of your
-program to install that is looked up using the [lookup_url]. Please add a
-[mirror 'scheme://some.url';] configuration option to your Fetchwarefile.
-EOE
-    mirror 'ftp://fake.url/too';
-    # Test no verify method specified.
-    print_ok(sub {check_lookup_config()},
-        <<EOE, 'checked check_lookup_config() no verify method specified');
-App-Fetchware: You failed to specify a method of verifying downloaded archives
-of your program. This is mandatory to ensure that the software that you download
-is the same as the software the author actually uploaded. Please specify a
-[gpg_keys_url] that points to the KEYS file that lists the author's gpg keys. If
-the author does not maintain such a file, then specify a [sha1_url] that
-specifies a directory where SHA-1 digests can be downloaded from. And if SHA-1
-digests are not availabe, then fall back on MD5 digests using [md5_url]. If not
-even MD5 digest verification is available from your software's author, you may
-specify the [verification_failure 'On';] configuration option to force fetchware
-to build and install your software even though it can not be verified. This
-option should not be enabled lightly, because mirrors do sometimes get hacked,
-and some times malware is injected.
-EOE
-    gpg_keys_url 'ftp://fake.url/as/well';
-
-
-    # Change lookup_method to test the other 2 branches of the check_method failure
-    # code.
-    config_replace('lookup_method', 'timestamp');
-    ok(eval {check_lookup_config(); 1;}, "checked check_lookup_config() 'timestamp'");
-    config_replace('lookup_method', 'versionstring');
-    ok(eval {check_lookup_config(); 1;}, "checked check_lookup_config() 'versionstring'");
-};
-
-
 subtest 'test get_directory_listing()' => sub {
     skip_all_unless_release_testing();
 
@@ -145,9 +71,6 @@ subtest 'test get_directory_listing()' => sub {
         program 'testin';
         mirror "$lookup_url";
         verify_failure_ok 'On';
-
-        # Do needed operations before I can test get_directory_listing().
-        check_lookup_config();
 
         # Test get_directory_listing().
         $lookup_url =~ m!^(ftp|http)(:?://.*)?!;
@@ -236,7 +159,6 @@ subtest 'test parse_directory_listing()' => sub {
     verify_failure_ok 'On';
 
     # Do the stuff parse_directory_listing() depends on.
-    check_lookup_config();
     my $directory_listing = get_directory_listing();
 
     cmp_deeply(parse_directory_listing($directory_listing),
@@ -366,6 +288,44 @@ subtest 'test lookup_by_versionstring()' => sub {
 
     is_deeply($sorted_file_listing, $expected_more_digits_than_higher_one,
         'checked lookup_by_versionstring() unequal length bug fix.');
+
+    # Also, test for duplicate version numbers--when two files have the same
+    # version string. Note: real-world mirrors are not going to have duplicate
+    # versions of the same program, but they might have multiple versions of the
+    # same version of the same program. For example apache has a unix source
+    # download, but also one for Windows, and one for dependencies.
+    # NOTE: The "timestamp" info for each pair of duplicate version numbers
+    # (for example, '111111111111111') must be the same, because some versions
+    # of perl use a quicksort sort algorithm that does not preserve the original
+    # order of equivelent entries. So, the order could change, which will break
+    # the  simple is_deeply() test.
+    my $same_version_number = [
+        ['v4.0.0', '444444444444444'],
+        ['v2.0.0', '222222222222222'],
+        ['v1.0.0', '111111111111111'],
+        ['v3.0.0', '333333333333333'],
+        ['v2.0.0', '222222222222222'],
+        ['v1.0.0', '111111111111111'],
+        ['v3.0.0', '333333333333333'],
+        ['v4.0.0', '444444444444444'],
+    ];
+
+    my $expected_same_version_number = [
+        ['v4.0.0', '444444444444444'],
+        ['v4.0.0', '444444444444444'],
+        ['v3.0.0', '333333333333333'],
+        ['v3.0.0', '333333333333333'],
+        ['v2.0.0', '222222222222222'],
+        ['v2.0.0', '222222222222222'],
+        ['v1.0.0', '111111111111111'],
+        ['v1.0.0', '111111111111111'],
+    ];
+
+    my $sorted_file_listing2 =
+        lookup_by_versionstring($same_version_number);
+
+    is_deeply($sorted_file_listing2, $expected_same_version_number,
+        'checked lookup_by_versionstring() same version number bugfix.');
 }; 
 
 
@@ -385,7 +345,6 @@ subtest 'test determine_download_path()' => sub {
     mirror "$test_lookup_url";
     verify_failure_ok 'On';
 
-    check_lookup_config();
     my $directory_listing = get_directory_listing();
     my $filename_listing = parse_directory_listing($directory_listing);
     
@@ -409,7 +368,6 @@ subtest 'test determine_download_path()' => sub {
 
     lookup_method 'versionstring';
 
-    check_lookup_config();
     $directory_listing = get_directory_listing();
     $filename_listing = parse_directory_listing($directory_listing);
     

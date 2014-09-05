@@ -1,7 +1,5 @@
 package App::Fetchware;
-{
-  $App::Fetchware::VERSION = '1.010';
-}
+$App::Fetchware::VERSION = '1.011';
 # ABSTRACT: App::Fetchware is Fetchware's API used to make extensions.
 ###BUGALERT### Uses die instead of croak. croak is the preferred way of throwing
 #exceptions in modules. croak says that the caller was the one who caused the
@@ -26,6 +24,9 @@ use Cwd 'cwd';
 use Sub::Mage;
 use URI::Split qw(uri_split uri_join);
 use Text::ParseWords 'quotewords';
+use File::Temp 'tempfile';
+use Term::ReadLine;
+use Term::UI;
 
 use App::Fetchware::Util ':UTIL';
 use App::Fetchware::Config ':CONFIG';
@@ -72,6 +73,9 @@ our @EXPORT = qw(
     mirror
     config
 
+    new
+    new_install
+    check_syntax
     start
     lookup
     download
@@ -81,6 +85,7 @@ our @EXPORT = qw(
     install
     end
     uninstall
+    upgrade
 
     hook
 );
@@ -90,8 +95,27 @@ our @EXPORT = qw(
 our %EXPORT_TAGS = (
     # No OVERRIDE_START OVERRIDE_END because start() does *not* use any helper
     # subs that could be beneficial to override()rs.
+    OVERRIDE_NEW => [qw(
+        extension_name
+        fetchwarefile_name
+        opening_message
+        get_lookup_url
+        download_lookup_url
+        get_mirrors
+        get_verification
+        get_filter_option
+        append_to_fetchwarefile
+        prompt_for_other_options
+        append_options_to_fetchwarefile
+        edit_manually
+    )],
+    OVERRIDE_NEW_INSTALL => [qw(
+        ask_to_install_now_to_test_fetchwarefile
+    )],
+    OVERRIDE_CHECK_SYNTAX => [qw(
+        check_config_options
+    )],
     OVERRIDE_LOOKUP => [qw(
-        check_lookup_config
         get_directory_listing
         parse_directory_listing
         determine_download_path
@@ -128,6 +152,7 @@ our %EXPORT_TAGS = (
         chdir_unless_already_at_path
     )],
     OVERRIDE_UNINSTALL => [qw()],
+    OVERRIDE_UPGRADE => [qw()],
 );
 # OVERRIDE_ALL is simply all other tags combined.
 @{$EXPORT_TAGS{OVERRIDE_ALL}} = map {@{$_}} values %EXPORT_TAGS;
@@ -428,6 +453,1181 @@ EOD
 
 
 
+sub new {
+    my ($term, $program_name) = @_;
+
+    # Instantiate a new Fetchwarefile object for managing and generating a
+    # Fetchwarefile, which we'll write to a file for the user or use to
+    # build a associated Fetchware package.
+    my $now = localtime;
+    my $fetchwarefile = App::Fetchware::Fetchwarefile->new(
+        header => <<EOF,
+use App::Fetchware;
+# Auto generated $now by fetchware's new command.
+# However, feel free to edit this file if fetchware's new command's
+# autoconfiguration is not enough.
+# 
+# Please look up fetchware's documentation of its configuration file syntax at
+# perldoc App::Fetchware, and only if its configuration file syntax is not
+# malleable enough for your application should you resort to customizing
+# fetchware's behavior. For extra flexible customization see perldoc
+# App::Fetchware.
+EOF
+        descriptions => {
+
+            program => <<EOA,
+program simply names the program the Fetchwarefile is responsible for
+downloading, building, and installing.
+EOA
+            filter => <<EOA,
+filter specifies a program name and/or version number that tells fetchware
+which program and or which version of a program you want fetchware to install.
+This is *only* needed in cases where there are multiple programs and or
+multiple versions of the same program in the directory lookup_url specifies.
+EOA
+            temp_dir => <<EOA,
+temp_dir specifies what temporary directory fetchware will use to download and
+build this program.
+EOA
+            user => <<EOA,
+user specifes a user that fetchware will drop priviledges to when fetchware
+downloads and builds your software. It will then switch back to root privs, if
+run as root, and install your software system wide. This does not work on
+Windows.
+EOA
+            fetchware_database_path => <<EOA,
+fetchware_database_path specifies an alternate path for fetchware to use to
+store the fetchware package that 'fetchware install' creates, and that
+'fetchware upgrade' uses to upgrade this fetchware package.
+EOA
+            prefix => <<EOA,
+prefix specifies what base path your software will be installed under. This
+only works for software that uses GNU AutoTools to configure itself, it uses
+./configure.
+EOA
+            configure_options => <<EOA,
+configure_options specifes what options fetchware should pass to ./configure
+when it configures your software. This option only works for software that
+uses GNU AutoTools.
+EOA
+            make_options => <<EOA,
+make_options specifes what options fetchware should pass to make when make is
+run to build and install your software.
+EOA
+            build_commands => <<EOA,
+build_commands specifies what commands fetchware should execute to build your
+software.
+EOA
+            install_commands => <<EOA,
+install_commands specifies what commands fetchware should execute to install
+your software.
+EOA
+            uninstall_commands => <<EOA,
+uninstall_commands specifies what commands fetchware should execute to uninstall
+your software.
+EOA
+            lookup_url => <<EOA,
+lookup_url specifes the url that fetchware uses to determine what what
+versions of your program are available. It should point to a directory listing
+instead of a specific file.
+EOA
+            lookup_method => <<EOA,
+lookup_method specifies how fetchware determines what version of your program
+to install. The default is the 'timestamp' algorithm, and then to try the
+'versionstring' algorithm if 'timestamp' fails. lookup_method specifies which
+one you would like to use. Only the strings 'timestamp' and 'versionstring'
+are allowed options.
+EOA
+            gpg_keys_url => <<EOA,
+gpg_keys_url specifies the url that fetchware will use to download the author's
+KEYS file that it uses for gpg verification.
+EOA
+            gpg_sig_url => <<EOA,
+gpg_sig_url specifies the url that fetchware uses to download digital
+signatures of this program. They're files that usually end .asc.
+EOA
+            sha1_url => <<EOA,
+sha1_url specfies the url that fetchware uses to download sha1sum files of
+this program. This url should be the program's main download site instead of a
+mirror, because a hacked mirror could alter the sha1sum on that mirror.
+EOA
+            md5_url => <<EOA,
+md5_url specfies the url that fetchware uses to download md5sum files of
+this program. This url should be the program's main download site instead of a
+mirror, because a hacked mirror could alter the md5sum on that mirror.
+EOA
+            verify_method => <<EOA,
+verify_method specifes a specific method that fetchware should use to verify
+your program. This method can be 'gpg', 'sha1', or 'md5'.
+EOA
+            no_install => <<EOA,
+no_install specifies that this software should not be installed. Instead, the
+install step is skipped, and fetchware prints to STDOUT where it downloaded,
+verified, and built your program. no_install must be a true or false value.
+EOA
+            verify_failure_ok => <<EOA,
+verify_failure_ok specifies that fetchware should not stop installing your
+software and terminate with an error message if fetchware fails to verify your
+software. You should never set this to true. Doing so could cause fetchware to
+install software that may have been compromised, or had malware inserted into
+it. Never use this option unless the author or maintainer of this program does
+not gpg sign or checksum his software.
+EOA
+            user_keyring => <<EOA,
+users_keyring if enabled causes fetchware to use the user's own gpg keyring
+instead of fetchware's own keyring.
+EOA
+            mirror => <<EOA
+The mirror configuration option provides fetchware with alternate servers to
+try to download this program from. This option is used when the server
+specified in the url options in this file is unavailable or times out.
+EOA
+        }
+    );
+    ###INSANEFEATUREENHANCEMENT### Prompt for name of program, and do a fuzzy 
+    #search on CPAN for that program under
+    #App::Fetchware::FetchwarefileX::UpCasedProgName. Consider using the meta
+    #CPAN API. And if it exists ask user if they wanna use that one instead of
+    #autogening one.
+    #
+    #Perhaps create a 'fetchwarefile' command to download and look at
+    #fetchwarefiles from CPAN, and then install them, and/or perhaps upload
+    #them pausing to ask for the user's PAUSE credentials!!!!!!!!!
+
+
+    extension_name(__PACKAGE__);
+
+
+    my $opening_message = <<EOM;
+Fetchware's new command is reasonably sophisticated, and is smart enough to
+determine based on the lookup_url you provide if it can autogenerate a
+Fetchwarefile for you. If Fetchware cannot, then it will ask you more
+questions regarding the information it requires to be able to build a
+installable fetchware package for you. After that, fetchware will ask you if
+you would like to edit the Fetchwarefile, fetchware has created for you in an
+editor. If you say yes, fetchware will open a editor for you, but if you say
+no, fetchware will skip the custom editing. Next, fetchware will create a test
+Fetchwarefile for you, and ask you if you would like to test it by trying to
+install it now. If you say yes, fetchware will install it, and if you say no,
+then fetchware will print the location of the Fetchwarefile it created for
+you to later use to install your application.
+EOM
+
+    opening_message($opening_message);
+
+    # Ask user for name of program unless the user provided one at command
+    # line such as fetchware new <programname>.
+    $program_name = fetchwarefile_name(program => $program_name);
+    vmsg "Determined name of your program to be [$program_name]";
+
+    $fetchwarefile->config_options(program => $program_name);
+    vmsg "Appended program [$program_name] configuration option to Fetchwarefile";
+
+    my $lookup_url = get_lookup_url($term);
+    vmsg "Asked user for lookup_url [$lookup_url] from user.";
+
+    $fetchwarefile->config_options(lookup_url => $lookup_url);
+    vmsg "Appended lookup_url [$lookup_url] configuration option to Fetchwarefile";
+
+    vmsg "Downloaded lookup_url [$lookup_url]";
+    my $filename_listing = download_lookup_url($term, $lookup_url);
+    vmsg "Downloaded lookup_url's directory listing";
+    vmsg Dumper($filename_listing);
+
+    my $mirrors_hashref = get_mirrors($term, $filename_listing);
+    vmsg "Added mirrors to your Fetchwarefile.";
+    vmsg Dumper($mirrors_hashref);
+
+    my $verify_hashref = get_verification($term, $filename_listing, $lookup_url);
+    vmsg "Added verification settings to Fetchwarefile.";
+    vmsg Dumper($verify_hashref);
+
+    my $filter_hashref = get_filter_option($term, $filename_listing);
+    vmsg "Added [$filter_hashref->{filter}] filter setting to Fetchwarefile.";
+
+    $fetchwarefile->config_options(
+        %$mirrors_hashref,
+        %$verify_hashref,
+        %$filter_hashref
+    );
+
+    ###BUGALERT### Ask to parrallelize make with make_options???
+    ###BUGALERT### Verify prefix is writable by current user, who will
+    #presumably be the user who will install the package now and later.
+    ###BUGALERT### Ask user for a prefix if their running nonroot???
+    vmsg 'Prompting for other options that may be needed.';
+    my $other_options_hashref = prompt_for_other_options($term,
+        temp_dir => {
+            prompt => <<EOP,
+What temp_dir configuration option would you like? 
+EOP
+            print_me => <<EOP
+temp_dir is the directory where fetchware creates a temporary directory that
+stores all of the temporary files it creates while it is building your software.
+The default directory is /tmp on Unix systems and C:\\temp on Windows systems.
+EOP
+        },
+        user => {
+            prompt => <<EOP,
+What user configuration option would you like? 
+EOP
+            print_me => <<EOP
+user specifies what user fetchware will drop priveleges to on Unix systems
+capable of doing so. This allows fetchware to download files from the internet
+with user priveleges, and not do anything as the administrative root user until
+after the downloaded software package has been verified as exactly the same as
+the author of the package intended it to be. If you use this option, the only
+thing that is run as root is 'make install' or whatever this package's
+install_commands configuratio option is.
+EOP
+        },
+        prefix => {
+            prompt => <<EOP,
+What prefix configuration option would you like? 
+EOP
+            print_me => <<EOP
+prefix specifies the base path that will be used to install this software. The
+default is /usr/local, which is acceptable for most unix users. Please note that
+this difective only works for software packages that use GNU AutoTools, software
+that uses ./configure --prefix=<your prefix will go here> to change the prefix.
+EOP
+        },
+        configure_options => {
+            prompt => <<EOP,
+What configure_options configuration option would you like? 
+EOP
+            print_me => <<EOP
+configure_options specifies what options fetchware should add when it configures
+this software package for you. A list of possible options can be obtained by
+running unarchiving the software package that corresponds to this Fetchwarefile,
+and running the command './configure --help'. These options vary from software
+package to software package. Please note that this option only works for GNU
+AutoTools based software distributions, ones that use ./configure to configure
+the software.
+EOP
+        },
+        make_options => {
+            prompt => <<EOP,
+What make_options configuration option would you like? 
+EOP
+            print_me => <<EOP
+make_options specifies what options fetchware will pass to make when make is run
+to compile, perhaps test, and install your software package. They are simpley
+added after make is called. An example is '-j 4', which will cause make to
+execute 4 jobs simultaneously. A reasonable rule of thumb is to set make's -j
+argument to two times as many cpu cores your computer has as compiling programs
+is sometimes IO bound instead of CPU bound, so you can get away with running
+more jobs then you have cores.
+EOP
+        },
+###BUGALERT### Create a config sub called build_system that takes args like
+#AutoTools, cmake, MakeMaker, Module::Build, and so on that will use the default
+#build commands of whatever system this option specifies.
+        build_commands => {
+            prompt => <<EOP,
+What build_commands configuration option would you like? 
+EOP
+            print_me => <<EOP
+build_commands specifies what commands fetchware will run to compile your
+software package. Fetchware's default is simply 'make', which is good for most
+programs. If you're software package uses something other than fetchware's
+default of GNU AutoTools, then you may need to change this configuration option
+to specify what you would like instead. Specify multiple build commands in
+single quotes with a comma between them:
+'./configure', 'make'
+EOP
+        },
+        install_commands => {
+            prompt => <<EOP,
+What install_commands configuration option would you like? 
+EOP
+            print_me => <<EOP
+install_commands specifies what commands fetchware will run to install your
+software package. Fetchware's default is simply 'make install', which is good
+for most programs. If you're software package uses something other than
+fetchware's default of GNU AutoTools, then you may need to change this
+configuration option to specify what you would like instead. Specify multiple
+build commands in single quotes with a comma between them:
+'make test', 'make install'
+EOP
+        },
+        uninstall_commands => {
+            prompt => <<EOP,
+What uninstall_commands configuration option would you like?
+EOP
+            print_me => <<EOP,
+uninstall_commands specifes what commands fetchware will run to uninstall your
+software pacakge. The default is 'make uninstall,' which works for some GNU
+AutoTools packages, but not all. If your software package does not have a 'make
+uninstall' make target, but it has some other command that can uninstall it,
+then please specify it using uninstall_commands so fetchware can uninstall it. 
+EOP
+
+        },
+        lookup_method => {
+            prompt => <<EOP,
+What lookup_method configuration option would you like? 
+EOP
+            print_me => <<EOP
+lookup_method specifies what how fetchware determines if a new version of your
+software package is available. The available algorithms are 'timstamp' and
+'versionstring'. 'timestamp' uses the timestamp listed in the FTP or HTTP
+listing, and uses the software package that is the newest by filesystem
+timestamp. The 'versionstring' algorithm uses the filename of the files in the
+FTP or HTTP listing. It parses out the version information, sorts it highest to
+lowest, and then picks the highest version of your software package. The default
+is try 'timestamp' and if that doesn't work, then try 'versionstring'.
+EOP
+        },
+        gpg_keys_url => {
+            prompt => <<EOP,
+What gpg_keys_url configuration option would you like? 
+EOP
+            print_me => <<EOP
+gpg_keys_url specifies a url similar to lookup_url in that it should specify a
+directory instead a specific file. It is used to download KEYS files, which
+contain your program author's gpg keys to import into gpg.
+EOP
+        },
+        gpg_sig_url => {
+            prompt => <<EOP,
+What gpg_sig_url configuration option would you like? 
+EOP
+            print_me => <<EOP
+gpg_sig_url specifies a url similar to lookup_url in that it should specify a
+directory instead a specific file. It is used to download gpg signatures to
+verify your software package.
+EOP
+        },
+        sha1_url => {
+            prompt => <<EOP,
+What sha1_url configuration option would you like? 
+EOP
+            print_me => <<EOP
+sha1_url specifies a url similar to lookup_url in that it should specify a
+directory instead of a specific file. It is separate from lookup_url, because
+you should download software from mirrors, but checksums from the original
+vendor's server, because checksums are easily replaced on a mirror by a hacker
+if the mirror gets hacked.
+EOP
+        },
+        md5_url => {
+            prompt => <<EOP,
+What md5_url configuration option would you like? 
+EOP
+            print_me => <<EOP,
+md5_url specifies a url similar to lookup_url in that it should specify a
+directory instead of a specific file. It is separate from lookup_url, because
+you should download software from mirrors, but checksums from the original
+vendor's server, because checksums are easily replaced on a mirror by a hacker
+if  the mirror gets hacked.
+EOP
+        },
+        verify_method => {
+            prompt => <<EOP,
+What verify_method configuration option would you like? 
+EOP
+            print_me => <<EOP,
+verify_method specifies what method of verification fetchware should use to
+ensure the software you have downloaded has not been tampered with. The default
+is to try gpg verification, then sha1, and then finally md5, and if they all
+fail an error message is printed and fetchware exits, because if your software
+package cannot be verified, then it should not be installed. This configuration
+option allows you to remove the warnings by specifying a specific way of
+verifying your software has not been tampered with. To disable verification set
+the 'verify_failure_ok' configuration option to true.
+EOP
+        },
+###BUGALERT### replace no_install config su with a command line option that
+#would be the opposite of --force???
+# Nah! Leave it! Just create a command line option for it too!
+        no_install => {
+            prompt => <<EOP,
+Would you like to enable the no_install configuration option? 
+EOP
+            ###BUGALERT### no_install is not currently implemented properly!!!
+            print_me => <<EOP
+no_install is a true or false option, whoose acceptable values include 1
+or 0, true or falue, On or Off. It's default value is false, but if you enable
+it, then fetchware will not install your software package, and instead it will
+simply download, verify, and build it. And then it will print out the full path
+of the directory it built your software package in.
+EOP
+            ###BUGALERT### Add support for a check regex, so that I can ensure
+            #that what the user enters will be either true or false!!!
+        },
+        verify_failure_ok => {
+            prompt => <<EOP,
+Would you like to enable the verify_failure_ok configuration option? 
+EOP
+            print_me => <<EOP
+verify_failure_ok is a true or false option, whoose acceptable values include 1
+or 0, true or falue, On or Off. It's default value is false, but if you enable
+it, then fetchware will not print an error message and exit if verification
+fails for your software package. Please note that you should never use this
+option, because it makes it possible for fetchware to install source code that
+may have been tampered with.
+EOP
+        },
+        users_keyring => {
+            prompt => <<EOP,
+Would you like to enable users_keyring configuration option? 
+EOP
+            print_me => <<EOP
+users_keyring when enabled causes fetchware to use the user who calls
+fetchware's gpg keyring instead of fetchware's own gpg keyring. Useful for
+source code distributions that do not provide an easily accessible KEYS file.
+Just remember to import the author's keys into your gpg keyring with gpg
+--import.
+EOP
+        },
+    );
+    vmsg 'User entered the following options.';
+    vmsg Dumper($other_options_hashref);
+
+    # Append all other options to the Fetchwarefile.
+    $fetchwarefile->config_options(%$other_options_hashref);
+    vmsg 'Appended all other options listed above to Fetchwarefile.';
+
+    my $edited_fetchwarefile = edit_manually($term, $fetchwarefile);
+    vmsg <<EOM;
+Asked user if they would like to edit their generated Fetchwarefile manually.
+EOM
+    # Generate Fetchwarefile.
+    if (blessed($edited_fetchwarefile)
+        and
+    $edited_fetchwarefile->isa('App::Fetchware::Fetchwarefile')) {
+        # If edit_manually() did not modify the Fetchwarefile, then generate
+        # it.
+        $fetchwarefile = $fetchwarefile->generate(); 
+    } else {
+        # If edit_manually() modified the Fetchwarefile, then do not
+        # generate it, and replace the Fetchwarefile object with the new
+        # string that represents the user's edited Fetchwarefile.
+        $fetchwarefile = $edited_fetchwarefile;
+    }
+
+    # Whatever variables the new() API subroutine returns are written via a pipe
+    # back to the parent, and then the parent reads the variables back, and
+    # makes then available to new_install(), back in the parent, as arguments.
+    return $program_name, $fetchwarefile;
+}
+
+
+
+
+
+
+sub extension_name {
+    # Use a state variable to keep $extension_name's value between calls.
+    state $extension_name;
+
+    # If $extension_name has never been touch and is still undef, then allow it
+    # to be set.
+    if (not defined $extension_name) {
+        $extension_name = shift;
+    # If $extension_name *is* set, and extension_name() was called with an
+    # argument, which is what defined shift does (shift shifts the first value
+    # off of @_ (the subroutine argument array), while defined checks to see if
+    # one was actually defined and provided by the caller.)
+    } elsif (defined $extension_name and defined shift) {
+        die <<EOD;
+App-Fetchware: extension_name() was called more than once. It is a singleton,
+and therefore can only be called once. Please only call it once to set its
+value, and then call it repeatedly wherever you need that value. see perldoc
+App::Fetchware for more details.
+EOD
+    }
+
+    # Return the singleton $extension_name.
+    return $extension_name;
+}
+
+
+
+sub opening_message {
+    my $opening_message = shift;
+
+    # Just print the opening message.
+    print $opening_message;
+}
+
+
+
+sub fetchwarefile_name {
+    my ($term, $fetchwarefile_name, $fetchwarefile_name_value) = @_;
+    my $what_a_fetchwarefile_name_is = <<EOM;
+Fetchware uses the $fetchwarefile_name configuration option to name this
+specific Fetchwarefile that Fetchware's new command is helping you create.
+Since, you did not provide a $fetchwarefile_name on the command line, please
+provide one below
+EOM
+    die <<EOD if not defined $fetchwarefile_name;
+App-Fetchware: in your call to fetchwarefile_name() you failed to call it with a
+defined \$fetchwarefile_name option. The \$fetchwarefile_name option you
+specified is [$fetchwarefile_name]. Please specify this option, and try again.
+EOD
+
+    if (not defined $fetchwarefile_name_value) {
+        $fetchwarefile_name_value = $term->get_reply(
+            prompt => q{What would you like to name this specific Fetchwarefile? },
+            print_me => $what_a_fetchwarefile_name_is,
+            # This option requires a name, so just pressing return, which would
+            # yield undef is not acceptable. We need an actual value, so check
+            # the value to ensure that it is defined.
+            allow => sub { defined shift @_ ? return 1 : return 0 }
+        );
+    }
+
+    return $fetchwarefile_name, $fetchwarefile_name_value;
+}
+
+
+
+sub get_lookup_url {
+    my $term = shift;
+
+
+    # prompt for lookup_url.
+    my $lookup_url = $term->get_reply(
+        print_me => <<EOP,
+Fetchware's heart and soul is its lookup_url. This is the configuration option
+that tells fetchware where to check what the latest version of your program is.
+This version number is then parsed out of the HTTP/FTP/local directory listing,
+and compared against the latest installed version to determine when a new
+version of your program has been released.
+
+How to determine your application's lookup_url:
+    1. Go to your application's Web site.
+    2. Determine the download link for the latest version and copy it with
+       CTRL-C or right-click it and select "copy".
+    3. Paste the download link into your browser's URL Location Bar.
+    4. Delete the filename from the location by starting at the end and deleting
+       everything to the left until you reach a slash '/'.
+       * ftp://a.url/downloads/program.tar.gz -> ftp://a.url/downloads/
+    5. Press enter to access the directory listing on your Application's mirror
+       site.
+    6. If the directory listing in either FTP or HTTP format is displayed in
+       your browser, then Fetchware's default, built-in lookup fuctionality will
+       probably work properly. Copy and paste this URL into the prompt below, and
+       Fetchware will download and analyze your lookup_url to see if it will work
+       properly. If you do not end up with a browser directory listing, then
+       please see Fetchware's documentation using perldoc App::Fetchware.
+EOP
+        prompt => q{What is your application's lookup_url? },
+        allow => qr!(ftp|http|file)://!);
+
+    return $lookup_url;
+}
+
+
+
+sub download_lookup_url {
+    my $term = shift;
+    my $lookup_url = shift;
+
+    my $filename_listing;
+    eval {
+        # Use no_mirror_download_dirlist(), because the regular one uses
+        # config(qw(lookup_url mirror)), which is not known yet.
+        my $directory_listing = no_mirror_download_dirlist($lookup_url);
+
+        # Create a fake lookup_url, because parse_directory_listing() uses it to
+        # determine the type of *_filename_listing() subroutine to call.
+        config(lookup_url => $lookup_url);
+
+        $filename_listing = parse_directory_listing($directory_listing);
+
+        __clear_CONFIG();
+
+        # Fix the most annoying bug that ever existed in perl.
+        # http://blog.twoshortplanks.com/2011/06/06/unexceptional-exceptions-in-perl-5-14/
+        1;
+    } or do {
+        my $lookup_url_failed_try_again = <<EOF;
+fetchware: the lookup_url you provided failed because of :
+[$@]
+Please try again. Try the steps outlined above to determine what your program's
+lookup_url should be. If you cannot figure out what it should be please see
+perldoc @{[extension_name()]} for additional hints on how to choose a lookup_url.
+EOF
+        $lookup_url = get_lookup_url($term, $lookup_url_failed_try_again);
+
+        eval {
+            # Use no_mirror_download_dirlist(), because the regular one uses
+            # config(qw(lookup_url mirror)), which is not known yet.
+            my $dir_list = no_mirror_download_dirlist($lookup_url);
+
+            # Create a fake lookup_url, because parse_directory_listing() uses
+            # it to determine the type of *_filename_listing() subroutine to
+            # call.
+            config(lookup_url => $lookup_url);
+
+            $filename_listing = parse_directory_listing($dir_list);
+
+            __clear_CONFIG();
+        # Fix the most annoying bug that ever existed in perl.
+        # http://blog.twoshortplanks.com/2011/06/06/unexceptional-exceptions-in-perl-5-14/
+        1;
+        } or do {
+            die <<EOD;
+fetchware: run-time error. The lookup_url you provided [$lookup_url] is not a
+usable lookup_url because of the error below:
+[$@]
+Please see perldoc @{[extension_name()]} for troubleshooting tips and rerun
+fetchware new.
+EOD
+        };
+    };
+
+    return $filename_listing;
+}
+
+
+
+###BUGALERT### Use the $filename_listing argument to search for a MIRRORS file
+#that specifies this open source distribution's official listing of mirrors,
+#parse it, and add them to the returned hash or mirrors. But, it'll probably
+#need configuration. Use GeoIP? No options are avalable. Parse the list, and
+#present it to the user, and ask him to pick some:)
+sub get_mirrors {
+    my ($term, $filename_listing) = @_;
+
+    my @mirrors;
+
+    my $mirror = $term->get_reply(
+        print_me => <<EOP,
+Fetchware requires you to please provide a mirror. This mirror is required,
+because most software authors prefer users download their software packages from
+a mirror instead of from the authors main download site, which your lookup_url
+should point to.
+
+The mirror should be a URL in standard browser format such as [ftp://a.mirror/].
+FTP, HTTP, and local file:// mirrors are supported. All other formats are not
+supported.
+EOP
+        prompt => 'Please enter the URL of your mirror: ',
+        allow => qr!^(ftp|http|file)://!,
+    );
+
+    # Append mirror to $fetchwarefile.
+    push @mirrors, $mirror;
+
+    if (
+        $term->ask_yn(
+        print_me => <<EOP,
+In addition to the one required mirror that you must define in order for
+fetchware to function properly, you may specify additonal mirros that fetchware
+will use if the mirror you've already specified is unreachable or download
+attempts using that mirror fail.
+EOP
+        prompt => 'Would you like to add any additional mirrors? ',
+        default => 'n',
+        )
+    ) {
+        # Prompt for first mirror outside loop, because if you just hit enter or
+        # type done, then the above text will be appended to your fetchwarefile,
+        # but you'll be able to skip actually adding a mirror.
+        my $first_mirror = $term->get_reply(
+                prompt => 'Type in URL of mirror or done to continue: ',
+                allow => qr!^(ftp|http|file)://!,
+            );
+            # Append $first_mirror to $fetchwarefile.
+            push @mirrors, $first_mirror;
+
+        while (1) {
+            my $mirror_or_done = $term->get_reply(
+                prompt => 'Type in URL of mirror or done to continue: ',
+                default => 'done',
+                allow => qr!(^(ftp|http|file)://)|done!,
+            );
+            if ($mirror_or_done eq 'done') {
+                last;
+            } else {
+                # Append $mirror_or_done to $fetchwarefile.
+                push @mirrors, $mirror_or_done;
+            }
+        }
+    }
+
+    return {mirror => \@mirrors};
+}
+
+
+
+sub get_verification {
+    my ($term, $filename_listing, $lookup_url) = @_;
+
+    my %options;
+
+    my %available_verify_methods;
+    # Determine what types of verification are available.
+    for my $file_and_timestamp (@$filename_listing) {
+        if ($file_and_timestamp->[0] =~ /\.(asc|sig|sign)$/) {
+            $available_verify_methods{gpg}++;
+        } elsif ($file_and_timestamp->[0] =~ /\.sha1?$/) {
+            $available_verify_methods{sha1}++;
+        } elsif ($file_and_timestamp->[0] =~ /\.md5$/) {
+            $available_verify_methods{md5}++;
+        }
+    }
+
+    my $verify_configed_flag = 0;
+    #If gpg is available prefer it over the others.
+    if (exists $available_verify_methods{gpg}
+            and defined $available_verify_methods{gpg}
+            and $available_verify_methods{gpg} > 0
+    ) {
+        msg <<EOM;
+gpg digital signatures found. Using gpg verification.
+EOM
+        $options{verify_method} = 'gpg';
+
+        # Search for a KEYS file to use to import the author's keys.
+        if (grep {$_->[0] eq 'KEYS'} @$filename_listing) {
+            msg <<EOM;
+KEYS file found using lookup_url. Adding gpg_keys_url to your Fetchwarefile.
+EOM
+            # Add 'KEYS' or '/KEYS' to $lookup_url's path.
+            my ($scheme, $auth, $path, $query, $fragment) =
+                uri_split($lookup_url);
+            $path = catfile($path, 'KEYS');
+            $lookup_url = uri_join($scheme, $auth, $path, $query, $fragment);
+
+            $options{gpg_keys_url} = $lookup_url;
+            $verify_configed_flag++;
+        } else {
+            msg <<EOM;
+KEYS file *not* found!
+EOM
+            # Since autoconfiguration of KEYS failed, try asking the user if
+            # they would like to import the author's key themselves into their
+            # own keyring and have fetchware use that.
+            if (
+                $term->ask_yn(prompt =>
+q{Would you like to import the author's key yourself after fetchware completes? },
+                    default => 'n',
+                    print_me => <<EOP,
+Automatic KEYS file discovery failed. Fetchware needs the author's keys to
+download and import into its own keyring, or you may specify the option
+user_keyring, which if true will cause fetchware to use the user who runs
+fetchware's keyring instead of fetchware's own keyring. But you, the user, needs
+to import the author's keys into your own gpg keyring. You can do this now in a
+separate shell, or after you finish configuring this Fetchwarefile. Just run the
+command [gpg --import <name of file>].
+EOP
+                )
+            ) {
+                $options{user_keyring} = 'On';
+
+                $verify_configed_flag++;
+            }
+
+            # And if the user does not want to, then fallback to sha1 and/or md5
+            # if they're defined, which is done below.
+        }
+    }
+    
+    
+    # Only try sha1 and md5 if gpg failed.
+    unless ($verify_configed_flag == 1) {
+        if (exists $available_verify_methods{sha1}
+                and defined $available_verify_methods{sha1}
+                and $available_verify_methods{sha1} > 0
+        ) {
+            msg <<EOM;
+SHA1 checksums found. Using SHA1 verification.
+EOM
+            $options{verify_method} = 'sha1';
+        } elsif (exists $available_verify_methods{md5}
+                and defined $available_verify_methods{md5}
+                and $available_verify_methods{md5} > 0
+        ) {
+            msg <<EOM;
+MD5 checksums found. Using MD5 verification.
+EOM
+            $options{verify_method} = 'md5';
+        } else {
+            # Print a huge long nasty warning even include links to news stories
+            # of mirrors actually getting hacked and serving malware, which
+            # would be detected and prevented with proper verification enabled.
+
+            # Ask user if they would like to continue installing fetchware even if
+            # verification fails, and then enable the verify_failure_ok option.
+            if (
+                $term->ask_yn(prompt => <<EOP,
+Would you like fetchware to ignore the fact that it is unable to verify the
+authenticity of any downloads it makes? Are you ok with possibly downloading
+viruses, worms, rootkits, or any other malware, and installing it possibly even
+as root? 
+EOP
+                    default => 'n',
+                    print_me => <<EOP,
+Automatic verification of your fetchware package has failed! Fetchware is
+capable of ignoring the error, and installing software packages anyway using its
+verify_failure_ok configuration option. However, installing software packages
+without verifying that they have not been tampered with could allow hackers to
+potentially install malware onto your computer. Don't think this is *not*
+possible or do you think its extremely unlikely? Well, it's actually
+surprisingly common:
+    1.  http://arstechnica.com/security/2012/09/questions-abound-as-malicious-phpmyadmin-backdoor-found-on-sourceforge-site/
+    Discusses how a mirror for sourceforge was hacked, and the phpMyAdmin
+    software package on that mirror was modified to spread malware.
+    2.  http://www.geek.com/news/major-open-source-code-repository-hacked-for-months-says-fsf-551344/
+    Discusses how FSF's gnu.org ftp download site was hacked.
+    3.  http://arstechnica.com/security/2012/11/malicious-code-added-to-open-source-piwik-following-website-compromise/
+    Discusses how Piwiki's wordpress software was hacked, and downloads of
+    Piwiki had malicious code inserted into them.
+    4. http://www.theregister.co.uk/2011/03/21/php_server_hacked/
+    Discusses how php's wiki.php.org server was hacked yielding credentials to
+    php's source code repository.
+Download mirrors *do* get hacked. Do not make the mistake, and think that it is
+not possible. It is possible, and it does happen, so please properly configure
+your Fetchwarefile to enable fetchware to verify that the downloaded software is
+the same what the author uploaded.
+EOP
+                )
+            ) {
+                # If the user is ok with not properly verifying downloads, then
+                # ignore the failure, and install anyway.
+                $options{verify_failure_ok} = 'On';
+            } else {
+                # Otherwise, throw an exception.
+                die <<EOD;
+fetchware: Fetchware *must* be able to verify any software packages that it
+downloads. The Fetchwarefile that you were creating could not do this, because
+you failed to specify how fetchware can verify its downloads. Please rerun
+fetchware new again, and this time be sure to specify a gpg_keys_url, specify
+user_keyring to use your own gpg keyring, or answer yes to the question
+regarding adding verify_failure_ok to your Fetchwarefile to make failing
+verificaton acceptable to fetchware.
+EOD
+            }
+        }
+    }
+
+    return \%options;
+}
+
+
+
+sub get_filter_option {
+    my $term = shift;
+    # $filename_listing is an array of [$filename, $timestamp] arrays.
+    my $filename_listing = shift;
+    msg <<EOS;
+Analyzing the lookup_url you provided to determine if fetchware can use it to
+successfully determine when new versions of your software are released.
+EOS
+
+    my $filter;
+    if (grep {$_->[0] =~ /^(CURRENT|LATEST)[_-]IS[_-].+/} @$filename_listing) {
+        # There is only one version in the lookup_url directory listing, so
+        # I do not need a filter option.
+        msg <<EOS;
+* The lookup_url you gave fetchware includes a CURRENT_IS or a LATEST_IS file
+that tells fetchware and regular users what the latest version is. Because of
+this we can be reasonable sure that a filter option is not needed, so I'll skip
+asking for one. You can provide one later if you need to provide one, when
+fetchware prompts you for any custom options you may want to use.
+EOS
+    } else {
+        # There is a CURRENT_IS_<ver_num> or LATEST_IS_<ver_num> file that tells
+        # you what the latest version is.
+###BUGALERT### Why is this line in both sections of the if statement??? Inside
+#this else block means that a CURRENT_IS or LATEST-IS was *not* found??? Fix
+#this!!!!!!
+        msg <<EOS;
+* The directory listing of your lookup_url has a CURRENT_IS_<ver_num> or
+LATEST_IS_<ver_num> file that specifies the latest version, which means that
+your program's corresponding Fetchwarefile does not need a filter option. If you
+still would like to provide one, you can do so later on, when fetchware allows
+you to define any additional configuration options.
+EOS
+        my $what_a_filter_is = <<EOA;
+Fetchware needs you to provide a filter option, which is a pattern that fetchware
+compares each file in the directory listing of your lookup_url to to determine
+which version of your program to install.
+
+Directories will have other junk files in them or even completely different
+programs that could confuse fetchware, and even potentially cause it to install
+a different program. Therefore, you should also add the program name to the
+begining of your filter. For example if you program is apache, then your filter
+should include the name of apache on mirror sites, which is actually:
+httpd
+
+For example, Apache's lookup_url has three versions in the same lookup_url
+directory listing. These are 2.4, 2.2, and 2.0. Without the filter option
+fetchware would choose the highest, which would be 2.4, which is the latest
+version. However, you may want to stick with the older and perhaps more stable
+2.2 version of apache. Therefore, you'll need to tell fetchware this by using
+by adding the version number to your filter:
+httpd-2.2
+will result in fetchware filtering the results of its lookup check through your
+filter of httpd-2.2 causing fetchware to choose the latest version from the 2.2
+stable branch instead of the higher version numbered 2.4 or 2.0 legacy releases.
+Note the use of the dash, which is used in the filename to separate the 'httpd'
+name part from the '2.2' version part.
+
+Note: fetchware accepts any valid perl regular expresion as an acceptable
+filter option, but that should only be needed for advanced users. See perldoc
+fetchware.
+EOA
+        # Prompt for the needed filter option.
+        $filter = $term->get_reply(
+            prompt => <<EOP,
+[Just press enter or return to skip adding a filter option]
+What does fetchware need your filter option to be? 
+EOP
+            print_me => $what_a_filter_is,
+        );
+        ###BUGALERT### Consider Adding a loop around checking the filter option
+        #that runs determine_lookup_url() using the provided filter option, and
+        #then asking the user if that is indeed the correct filter option, and
+        #if not ask again and try it again unit it succeeds or user presses
+        #ctrl-c|z.
+    }
+
+    return {filter => $filter};
+}
+
+
+
+sub prompt_for_other_options {
+    my $term = shift;
+
+    my %option_description = @_;
+
+    my %answered_option;
+
+    if (
+        $term->ask_yn(prompt =>
+        q{Would you like to add extra configuration options to your fetchwarefile?},
+        default => 'n',
+        print_me => <<EOP,
+Fetchware has many different configuration options that allow you to control its
+behavior, and even change its behavior if needed to customize fetchware for any
+possible source code distribution.
+
+If you think you need to add configuration options please check out perldoc
+fetchware for more details on fetchware and its Fetchwarefile configuration
+options.
+
+If this is your first package your creating with Fetchware or you're creating a
+package for a new program for the first time, you should skip messing with
+fetchware's more flexible options, and just give the defaults a chance.
+EOP
+        )
+    ) {
+        my @options = keys %option_description;
+        my @config_file_options_to_provide = $term->get_reply(
+            print_me => <<EOP,
+Below is a listing of Fetchware's available configuration options.
+EOP
+            prompt => <<EOP,
+Please answer with a space seperated list of the number before the configuration
+file options that you would like to add to your configuration file? 
+EOP
+            choices => \@options,
+            multi => 1,
+        );
+
+
+        for my $config_file_option (@config_file_options_to_provide) {
+            $answered_option{$config_file_option} = $term->get_reply(
+                print_me => $option_description{$config_file_option}->{print_me},
+                prompt => $option_description{$config_file_option}->{prompt},
+            );
+        }
+    }
+    return \%answered_option;
+}
+
+
+
+sub edit_manually {
+    my ($term, $fetchwarefile) = @_;
+
+    if (
+        $term->ask_yn(
+        print_me => <<EOP,
+Fetchware has now asked you all of the needed questions to determine what it
+thinks your new program's Fetchwarefile should look like. But it's not perfect,
+and perhaps you would like to tweak it manually. If you would like to edit it
+manually in your favorite editor, answer 'yes', and if you want to skip this just
+answer 'no', or just press <Enter>.
+
+If you would like to cancel any edits you have made, and use the automagically
+generated Fetchwarefile, just delete the entire contents of the file, and save
+an empty file.
+EOP
+            prompt => q{Would you like to edit your automagically generated Fetchwarefile manually? },
+        default => 'n',
+        )
+    ) {
+        my ($fh, $fetchwarefile_filename) =
+            tempfile('Fetchwarefile-XXXXXXXXX', TMPDIR => 1);
+        print $fh $fetchwarefile->generate();
+
+        close $fh;
+
+        # Ask what editor to use if EDITOR environment variable is not set.
+        my $editor = $ENV{EDITOR} || do {
+            $term->get_reply(prompt => <<EOP,
+What text editor would you like to use? 
+EOP
+                print_me => <<EOP
+The Environment variable EDITOR is not set. This is used by fetchware and other
+programs to determine what program fetchware should use to edit your
+Fetchwarefile. Please enter what text editor you would like to use. Examples
+include: vim, emacs, nano, pico, or notepad.exe (on Windows).
+EOP
+            );
+        };
+
+        run_prog($editor, $fetchwarefile_filename);
+        # NOTE: fetchware will "block" during the above call to run_prog(), and
+        # wait for the user to close the editor program.
+
+        # If the edited Fetchwarefile does not have a file size of zero.
+        if (not -z $fetchwarefile_filename) {
+            my $fh = safe_open($fetchwarefile_filename, <<EOD);
+fetchware: run-time error. fetchware can't open the fetchwarefile you edited
+with your editor after you edited it. This just shouldn't happen. Possible race
+condition or weird bug. See perldoc fetchware.
+EOD
+            # Since the generated Fetchwarefile has been edited, because its
+            # size is nonzero, then replace the App::Fetchware::Fetchwarefile
+            # object with whatever text can be slurped from the file the user
+            # edited. Since it is now a scalar instead of an object, that is how
+            # Fetchware will tell if the user changed it or not.
+            $fetchwarefile = do { local $/; <$fh> }; # slurp fetchwarefile
+        } else {
+            msg <<EOM;
+You canceled any custom editing of your fetchwarefile by writing an empty file
+to disk.
+EOM
+        }
+    }
+    return $fetchwarefile;
+}
+
+
+
+
+
+sub new_install {
+    my ($term, $program_name, $fetchwarefile) = @_;
+
+    my $fetchware_package_path =
+        ask_to_install_now_to_test_fetchwarefile($term, \$fetchwarefile,
+            $program_name);
+
+    return $fetchware_package_path;
+
+}
+
+
+
+
+
+
+sub ask_to_install_now_to_test_fetchwarefile {
+    my ($term, $fetchwarefile, $program_name) = @_;
+
+
+    vmsg <<EOM;
+Determining if user wants to install now or just save their Fetchwarefile.
+EOM
+
+    # If the user wants to install their new Fetchwarefile.
+    if (
+        $term->ask_yn(
+        print_me => <<EOP,
+It is recommended that fetchware go ahead and install the package based on the
+Fetchwarefile that fetchware has created for you. If you don't want to install
+it now, then enter 'no', but if you want to test your Fetchwarefile now, and
+install it, then please enter 'yes' or just press <Enter>.
+EOP
+        prompt => q{Would you like to install the package you just created a Fetchwarefile for? },
+        default => 'y',
+        )
+    ) {
+
+        # Create a temp Fetchwarefile to store the autogenerated configuration.
+        my ($fh, $fetchwarefile_filename)
+            =
+            tempfile("fetchware-$$-XXXXXXXXXXXXXX", TMPDIR => 1, UNLINK => 1);
+        print $fh $$fetchwarefile;
+        # Close the temp file to ensure everything that was written to it gets
+        # flushed from caches and actually makes it to disk.
+        close $fh;
+
+        vmsg <<EOM;
+Saved Fetchwarefile temporarily to [$fetchwarefile_filename].
+EOM
+
+        # Reach up bin/fetchware's skirt, and call cmd_install directly, because
+        # if I use system() and call fetchware again in a separate process using
+        # the install command, it will return a useless number indicating
+        # success instead of the $fetchware_package_path I want. I could parse
+        # the output, but that's a head ache I want to avoid. Instead, I'll just
+        # be a little frisky.
+        my $fetchware_package_path = fetchware::cmd_install($fetchwarefile_filename);
+        ###BUGALERT### Call cmd_install() inside an eval that will catch any
+        #problems that come up, and suggest how to fix them???
+        #Is that really doable???
+        vmsg <<EOM;
+Copied Fetchwarefile package to fetchware database [$fetchware_package_path].
+EOM
+        msg 'Installed Fetchware package to fetchware database.';
+        return $fetchware_package_path;
+    # Else the user just wants to save the Fetchwarefile somewhere.
+    } else {
+        my $fetchwarefile_filename = $program_name . '.Fetchwarefile';
+
+        # Get a name for the Fetchwarefile that does not already exist.
+        if (-e $fetchwarefile_filename) {
+            while (1) {
+                $fetchwarefile_filename = $term->get_reply(
+                    prompt => <<EOP,
+What would you like your new Fetchwarefile's filename to be?
+EOP
+                    print_me => <<EOP
+Fetchware by default uses the program name you specified at the beginning of
+running fetchware new plus a '.Fetchwarefile' extension to name your
+Fetchwarefile. But his file already exists, so you'll have to pick a new
+filename that does not currently exist.
+EOP
+                );
+                last unless -e $fetchwarefile_filename;
+            }
+        }
+        vmsg <<EOM;
+Determine Fetchwarefile name to be [$fetchwarefile_filename].
+EOM
+
+    ###BUGALERT### Replace >, create or delete whole file and replace it with
+    #what I write now, with >> for append to file if it already exists????
+    ###BUGALERT### Should safe_open() be moved into the loop above, and instead
+    #of checking for existence, open the file using safeopen as needed, but
+    #don't write to it just yet, and then test the open file handle if it's
+    #empty, and therefore presumable a new file, or an old file that no one
+    #cares about anymore, because it's empty?
+        my $fh = safe_open($fetchwarefile_filename, <<EOD, MODE => '>');
+fetchware: failed to open your new fetchwarefile because of os error
+[$!]. This really shouldn't happen in this case. Probably a bug, or a weird race
+condition.
+EOD
+        print $fh $$fetchwarefile;
+
+        close $fh;
+
+        msg "Saved Fetchwarefile to [$fetchwarefile_filename].";
+        return $fetchwarefile_filename;
+    }
+}
+
 
 
 
@@ -456,13 +1656,10 @@ EOD
 
 
 
+
 sub lookup {
     msg "Looking up download url using lookup_url [@{[config('lookup_url')]}]";
 
-    # die if lookup_url wasn't specified.
-    # die if lookup_method was specified wrong.
-    vmsg 'Checking that lookup has been configured properly.';
-    check_lookup_config();
     # obtain directory listing for file, ftp, or http. (a sub for each.)
     vmsg 'Downloading a directory listing using your lookup_url';
     my $directory_listing = get_directory_listing();
@@ -489,71 +1686,6 @@ sub lookup {
 
 
 
-
-
-sub check_lookup_config {
-    if (not defined config('lookup_url')) {
-        die <<EOD;
-App-Fetchware: run-time syntax error: your Fetchwarefile did not specify a
-lookup_url. lookup_url is a required configuration option, and must be
-specified, because fetchware uses it to located new versions of your program to
-download. See perldoc App::Fetchware
-EOD
-    }
-
-    # Only test lookup_method if it has been defined.
-    if (defined config('lookup_method')) {
-        if (config('lookup_method') eq 'timestamp') {
-            # Do nothing
-        } elsif (config('lookup_method') eq 'versionstring') {
-            # Do nothing
-        } else {
-            die <<EOD;
-App-Fetchware: run-time syntax error: your Fetchwarefile specified a incorrect
-option to lookup_method. lookup_method only supports the options 'timestamp' and
-'versionstring'. All others are wrong. See man App::Fetchware.
-EOD
-        }
-    }
-
-    ###BUGALERT### Should I add a syntax_check() API sub to App::Fetchware, so
-    #other extensions can do this easier. Perhaps even create a helper function
-    #where you can specify which config options must be specified???
-    die <<EOD unless config('program');
-App-Fetchware: You failed to specify a [program] configuration option. This
-option is mandatory, and gives the program your Fetchwarefile manages a name.
-Please add a [program 'your program's name here';] configuration option to your
-Fetchwarefile.
-EOD
-
-    die <<EOD unless config('mirror');
-App-Fetchware: You failed to specify a [mirror] configuration option. This
-option is mandatory, and is used by fetchware to download a new version of your
-program to install that is looked up using the [lookup_url]. Please add a
-[mirror 'scheme://some.url';] configuration option to your Fetchwarefile.
-EOD
-
-    unless (config('gpg_keys_url')
-            or config('gpg_sig_url')
-            or config('md5_url')
-            or config('sha1_url')
-    ) {
-        msg <<EOD unless config('verify_failure_ok');
-App-Fetchware: You failed to specify a method of verifying downloaded archives
-of your program. This is mandatory to ensure that the software that you download
-is the same as the software the author actually uploaded. Please specify a
-[gpg_keys_url] that points to the KEYS file that lists the author's gpg keys. If
-the author does not maintain such a file, then specify a [sha1_url] that
-specifies a directory where SHA-1 digests can be downloaded from. And if SHA-1
-digests are not availabe, then fall back on MD5 digests using [md5_url]. If not
-even MD5 digest verification is available from your software's author, you may
-specify the [verification_failure 'On';] configuration option to force fetchware
-to build and install your software even though it can not be verified. This
-option should not be enabled lightly, because mirrors do sometimes get hacked,
-and some times malware is injected.
-EOD
-    }
-}
 
 
 
@@ -586,9 +1718,13 @@ sub determine_download_path {
     # Base lookup algorithm on lookup_method configuration sub if it was
     # specified.
     my $sorted_filename_listing;
-    if (config('lookup_method') eq 'timestamp') {
+    if (defined config('lookup_method')
+        and config('lookup_method') eq 'timestamp'
+    ) {
         $sorted_filename_listing = lookup_by_timestamp($filename_listing);
-    } elsif (config('lookup_method') eq 'versionstring') {
+    } elsif (defined config('lookup_method')
+        and config('lookup_method') eq 'versionstring'
+    ) {
         $sorted_filename_listing = lookup_by_versionstring($filename_listing);
     # Default is to just use timestamp although timestamp will call
     # versionstring if it can't figure it out, because all of the timestamps
@@ -674,7 +1810,6 @@ sub determine_download_path {
 
         return \@filename_listing;
     }
-
 
 
 
@@ -828,9 +1963,9 @@ sub  lookup_by_versionstring {
         @iversionstring = grep {$_ ne ''} @iversionstring;
 
         if (@iversionstring == 0) {
-            vmsg <<EOM;
             # Let the usr know we're skipping this filename, but only if they
             # really want to know (They turned on verbose output.).
+            vmsg <<EOM;
 File [$file_listing->[$i][0]] has no version number in it. Ignoring.
 EOM
             # And also skip adding this @iversionstring to @versionstrings,
@@ -880,12 +2015,24 @@ EOD
         # ...and be sure to start at index 1, because index 0 is the index of
         # $file_listing that this entry in @versionstrings belongs to...
         for my $x (1..$last_index) {
+            # If one of $b or $a has more numbers in it ($#{$a_or_b} is smaller than
+            # $x), then if it's $b we should return -1, because $b is smaller
+            # than $a, and if it's $a, we should return 1, because $b is bigger
+            # than $a.
+            return -1 if $x > $#{$b};
+            return 1 if $x > $#{$a};
+
             my $spaceship_result = $b->[$x] <=> $a->[$x];
 
             # ...and as soon as they no longer equal each other return whatever
             # result (-1 or 1) <=> gives.
             return $spaceship_result if $spaceship_result != 0;
         }
+
+        # Return 0 for equal, because if the two versions were not equal, then
+        # the for loop above would have caught it, and returned the appropriate
+        # -1 or 1.
+        return 0;
     } @versionstrings;
 
     # Now, "sort" $file_listing into the order @versionstrings was sorted into
@@ -1031,7 +2178,7 @@ sub verify {
     msg "Verifying the downloaded package [$package_path]";
 
     my $retval;
-    if (config('verify_method') eq undef) {
+    unless (defined(config('verify_method'))) {
         # if gpg fails try
         # sha and if it fails try
         # md5 and if it fails die
@@ -1675,21 +2822,6 @@ EOD
 sub build {
     my $build_path = shift;
 
-    # The other build options are ignored if build_commands is specified. This
-    # should be an error.
-    ###BUGALERT### When you implement check_syntax() move this there.
-    if ( (config('build_commands') and config('configure_options') )
-        or ( config('build_commands') and config('make_options') )
-        or ( config('build_commands') and config('prefix') ) ) {
-        die <<EOD;
-App-Fetchware: You cannot specify any other build options when you specify
-build_commands, because build_commands overrides all of those other options.
-Please fix your Fetchwarefile by adding the other options in with your
-build_commands or remove the build_commands, and just use the other options if
-possible.
-EOD
-    }
-
     msg "Building your package in [$build_path]";
 
     vmsg "changing Directory to build path [$build_path]";
@@ -1913,6 +3045,201 @@ EOM
 
 
 
+sub upgrade {
+    my ($download_path, $fetchware_package_path) = @_;
+
+    # I only need the basename.
+    my $download_path_basename = file($download_path)->basename();
+    my $upgrade_name_basename =
+        file( $fetchware_package_path)->basename();
+    vmsg <<EOM;
+Shortened the new download url [$download_path_basename] and the installed
+package's [$upgrade_name_basename] into just their basenames.
+EOM
+
+    # Strip trailing garbage to normalize their names, so that they can be
+    # compared to each other.
+    ###BUGALERT### This comparision is quite fragile. Figure out a better way to
+    #do this!!!
+    $upgrade_name_basename =~ s/\.fpkg$//;
+    $download_path_basename
+        =~ s/(\.(?:zip|tgz|tbz|txz|fpkg)|(?:\.tar\.(gz|bz2|xz|Z)?))$//;
+    vmsg <<EOM;
+Striped the new download url [$download_path_basename] and the installed
+package's [$upgrade_name_basename] of their file extensions.
+EOM
+
+    # Check if $upgrade_name_basename and $download_path_basename are eq, and if
+    # they are return false indicating that this program should not be upgraded,
+    # because the version available for upgrading is the same as the currently
+    # installed version.
+    return if $upgrade_name_basename eq $download_path_basename;
+
+        # Transform both competing filenames into a string of version numbers.
+
+    # Use lookup_by_versionstring() to determine which version of the same
+    # program is "newer."
+    my $sorted_file_names = lookup_by_versionstring(
+        [
+            [$upgrade_name_basename, 'placeholder'],
+            [$download_path_basename, 'placeholder'],
+        ]
+    );
+
+    if ($sorted_file_names->[0][0] eq $download_path_basename
+        # Make sure cmd_upgrade() does not upgrade when the latest version is
+        # the same as the currently installed version ($upgrade_name_basename).
+        and $sorted_file_names->[0][0] ne $upgrade_name_basename) {
+        # The latest version we can download ($download_path_basename) is newer
+        # than the currently installed version ($upgrade_name_basename), so we
+        # should upgrade.
+        return 1;
+    } else {
+        # Currenlty installed version ($upgrade_name_basename) is equal to the
+        # latest version available for download ($download_path_basename), so
+        # return false indicating that we sould not upgrade.
+        return;
+    }
+}
+
+
+
+
+sub check_syntax {
+
+    # Use check_config_options() to run config() a bunch of times to check the
+    # already parsed Fetchwarefile.
+    return check_config_options(
+        BothAreDefined => [ [qw(build_commands)],
+            [qw(prefix configure_options make_options)] ],
+        Mandatory => [ 'program', <<EOM ],
+App-Fetchware: Your Fetchwarefile must specify a program configuration
+option. Please add one, and try again.
+EOM
+        Mandatory => [ 'mirror', <<EOM ],
+App-Fetchware: Your Fetchwarefile must specify a mirror configuration
+option. Please add one, and try again.
+EOM
+        Mandatory => [ 'lookup_url', <<EOM ],
+App-Fetchware: Your Fetchwarefile must specify a lookup_url configuration
+option. Please add one, and try again.
+EOM
+        ConfigOptionEnum => ['lookup_method', [qw(timestamp versionstring)] ],
+        ConfigOptionEnum => ['verify_method', [qw(gpg sha1 md5)] ],
+    );
+}
+
+
+
+
+
+sub check_config_options {
+    my @args = @_;
+
+    my @both_are_defined;
+    my @mandatory;
+    my @config_option_enum;
+
+    # Process arguments, and check that they were specified correctly.
+    # Loop over @args 2 at a time hence the $i += 2 instead of $i++.
+    for( my $i = 0; $i < @args; $i += 2 ) {
+        my( $type, $AnB ) = @args[ $i, $i+1 ];
+        die <<EOD unless ref $AnB eq 'ARRAY';
+App-Fetchware: check_config_options()'s even arguments must be an array
+reference. Please correct your arguments, and try again.
+EOD
+        die <<EOD unless @$AnB == 2;
+App-Fetchware: check_config_options()'s even arguments must be an array
+reference with exactly two elements in it. Please correct and try again.
+EOD
+
+        if ($type eq 'BothAreDefined') {
+            push @both_are_defined, $AnB;
+        } elsif ($type eq 'Mandatory') {
+            push @mandatory, $AnB;
+        } elsif ($type eq 'ConfigOptionEnum') {
+            push @config_option_enum, $AnB;
+        } else {
+            die <<EOD;
+App-Fetchware: check_config_options() only supports types 'BothAreDefined',
+'Mandatory', and 'ConfigOptionEnum.' Please specify one of these, and try again.
+EOD
+        }
+    }
+
+    # Process @both_are_defined by checking if both of the elements in the
+    # provided arrayrefs are "both defined", and if they are "both defined"
+    # throw an exception.
+    for my $AnB (@both_are_defined) {
+        my ($A, $B) = @$AnB;
+
+        my @A_defined;
+        my @B_defined;
+
+        # Check which ones are defined in both $A and $B
+        {
+            # the config() call will call the specified strings of which many
+            # are expected to be uninitialized. Because we expect them to be
+            # uninitialized, we use that behavior to determine if they have been
+            # specified in the users Fetchwarefile, and if an option was not
+            # specified, then undef is returned by config(). Since, we expect
+            # lots of undef warnings, we'll disable them.
+            no warnings 'uninitialized';
+            @A_defined = grep {config($_)} @$A;
+            @B_defined = grep {config($_)} @$B;
+        }
+
+        if (@A_defined > 0 and @B_defined > 0) {
+            die <<EOD;
+App-Fetchware: Your Fetchwarefile has incompatible configuration options.
+You specified configuration options [@$A] and [@$B], but these options are not
+compatible with each other. Please specifiy either [@$A] or [@$B] not both.
+EOD
+        }
+    }
+
+
+    # Process @mandatory options by checking if they're defined, and if not
+    # throwing the specified exception.
+    for my $AnB (@mandatory) {
+        my ($option, $error_message) = @$AnB;
+
+        die $error_message if not defined config($option);
+    }
+
+
+    # Process @config_option_enum.
+    for my $AnB (@config_option_enum) {
+        my ($option, $enumerations) = @$AnB;
+
+        # Ditch uninitialized warnings, because I'm using undef to mean
+        # unspecified, so undef is not something unexpected to bother warning
+        # about, but something that will happen all the time.
+        {
+            no warnings 'uninitialized';
+        
+            # Only test the @enumerations if $option was specified in the
+            # Fetchwarefile.
+            if (config($option)) {
+
+                # Only one @enumerations should equal $option not more than one, hence
+                # the == 1 part.
+                die <<EOD unless (grep {config($option) eq $_} @$enumerations) == 1;
+App-Fetchware: You specified the option [$option], but failed to specify only
+one of its acceptable values [@$enumerations]. Please change the value you
+specified [@{[config($option)]}] to one of the acceptable ones listed above, and try again.
+EOD
+            }
+
+        }
+    }
+    
+    return 'Syntax Ok';
+}
+
+
+
+
 sub end {
     # Use cleanup_tempdir() to cleanup your tempdir for us.
     cleanup_tempdir();
@@ -1981,16 +3308,6 @@ EOD
 
 ###BUGALERT### Actually implement croak or more likely confess() support!!!
 
-##TODO##=head1 DIAGNOSTICS
-##TODO##
-##TODO##App::Fetchware throws many exceptions. These exceptions are not listed below,
-##TODO##because I have not yet added additional information explaining them. This is
-##TODO##because fetchware throws very verbose error messages that don't need extra
-##TODO##explanation. This section is reserved for when I have to actually add further
-##TODO##information regarding one of these exceptions.
-##TODO##
-##TODO##=cut
-
 __END__
 
 =pod
@@ -2001,7 +3318,7 @@ App::Fetchware - App::Fetchware is Fetchware's API used to make extensions.
 
 =head1 VERSION
 
-version 1.010
+version 1.011
 
 =head1 SYNOPSIS
 
@@ -2036,7 +3353,7 @@ version 1.010
     ### values.
     hook lookup => sub {
         # Callback that replaces lookup()'s behavior.
-        # Callback receives the same arguments as lookup(), and is must return
+        # Callback receives the same arguments as lookup(), and it must return
         # the same number and type of arguments that lookup() returns.
         return $download_path;
     };
@@ -2052,9 +3369,9 @@ App::Fetchware represents fetchware's API. For ducumentation on how to use
 App::Fetchware's fetchware command line interface see L<fetchware>.
 
 It is the heart and soul of fetchware where all of fetchware's main behaviors
-are kept. It is fetchware's API, which consists of the subroutines start(),
-lookup(), download(), verify(), unarchive(), build(), install(), uninstall(),
-and end().
+are kept. It is fetchware's API, which consists of the subroutines new(),
+new_install(), check_syntax(), start(), lookup(), download(), verify(),
+unarchive(), build(), install(), uninstall(), upgrade() and end().
 
 App::Fetchware stores both details about C<fetchware>'s configuration file
 syntax, documents how to create a fetchware extension, and documents the
@@ -2072,6 +3389,11 @@ For details on App::Fetchware's configuration file syntax see the section L<CREA
 If the needs of your program overcome the capabilities of App::Fetchware's configuration options, then see the section
 L<FURTHER CUSTOMIZTING YOUR FETCHWAREFILE> for details on how to overcome those
 limitations.
+
+=item *
+
+Straightforward and more complicated Fetchware file examples are available in
+the L<EXAMPLE FETCHWAREFILES> section.
 
 =item * 
 
@@ -2232,10 +3554,10 @@ install the software that is downloaded, must execute the build and installation
 scripts on your computer sometimes even as the root administrator! Therefore,
 fetchware will refuse to build and install any software package that cannot be
 verified. This limitation can be bypassed by setting the C<verify_failure_ok>
-configuration option to true, but his is B<not> recommended.
+configuration option to true, but this is B<not> recommended.
 
 Instead, if standard verification fails, please set up one or more of the
-configuration options below that may allow verification to fail if the author
+configuration options below that may allow verification to succeed if the author
 has his download site set up differently then fetchware expects.
 
 =over
@@ -2966,7 +4288,7 @@ exports, which must be properly exported for fetchware to work properly.
 
 =over
 
-=item L<OVERRIDE_LOOKUP|lookup() API REFERENCE> - L</check_lookup_config()>,
+=item L<OVERRIDE_LOOKUP|lookup() API REFERENCE> - 
 L</get_directory_listing()>, L</parse_directory_listing()>,
 L</determine_download_path()>, L</ftp_parse_filelist()>, L</http_parse_filelist()>,
 L</file_parse_filelist()>, L</lookup_by_timestamp()>,
@@ -2996,7 +4318,7 @@ does not add any subroutines of its own..
 
 An example:
 
-    use App::Fetchware ':OVERRIDE_LOOKUP';
+    use App::Fetchware qw(:DEFAULT :OVERRIDE_LOOKUP);
 
     ...
 
@@ -3023,33 +4345,709 @@ See the section L<EXAMPLE FETCHWAREFILES> for real examples of using hook() to
 change fetchware's behavior enough to make it work properly with different
 source code distributions that are popular.
 
+=head1 EXAMPLE FETCHWAREFILES
+
+Below are example Fetchwarefiles. They use a range of features to show you what
+Fetchware can do, and how it's Fetchwarefile can be manipulated to work with any
+source-code distribution.
+
+=head2 Apache Web Server
+
+This Apache Fetchwarefile includes a few extra mirrors just in case one is down.
+The fairly common C<-j 4> C<make_option> to make the build go faster, and a
+gigantic C<configure_options> telling C<./configure> excatly how I want my
+Apache built and configured. It also uses a heredoc to make its
+C<configure_options> configuration option much more legible.
+
+=over
+
+    use App::Fetchware;
+
+    program 'Apache';
+    lookup_url 'http://www.apache.org/dist/httpd/';
+    filter 'httpd-2.2';
+    mirror 'http://apache.mirrors.pair.com/httpd/';
+    mirror 'http://mirrors.ibiblio.org/apache/httpd/';
+    mirror 'ftp://apache.cs.utah.edu/apache.org/httpd/';
+
+    verify_method 'gpg';
+    gpg_keys_url 'http://www.apache.org/dist/httpd/KEYS';
+
+    make_options '-j 4';
+    prefix '/home/dly/software/apache2.2';
+    # You can use heredocs to make gigantic options like this one more legible.
+    configure_options <<EOO;
+    --with-mpm=prefork
+    --enable-modules="access alias auth autoindex cgi logio log_config status vhost_alias userdir rewrite ssl"
+    --enable-so
+    EOO
+
+=back
+
+=head2 NGINX Web Server
+
+nginx has its distribution set up differently than Apache, so some changes are
+needed. First, nginx does not seem to use any mirrors at all, which means
+nginx's Fetchwarefile is going to look kind of stupid with the same exact URL
+being used for both the C<lookup_url> and the C<mirror>, but such a
+configuration is supported. Next, nginx does not have a KEYS file, but it does
+list it's developer's keys on its Website. So, they have to be imported manually
+into your keyring, and then specify the C<user_keyring> option to switch
+fetchware from usings its own keyring to using your own keyring. Also, note the
+comment regarding having to use the C<user> option to specify a real user
+account. This is needed, because the verify step is done by fetchware's child
+after that child drops its root privileges. Th default user is nobody, and
+nobody has no real home, and therefore no keyring, so gpg won't be able to read
+the keys you ask it to by using the C<user_keyring> option; therefore, C<user>
+must be specified to change it to a real user, whoose keyring has had these keys
+imported into it. Also, worth noting that this nginx configuration does not use
+a C<filter> option. This is not actually needed, because the only source-code
+packages availabe at the C<lookup_url> are the nginx software packages
+themselves, but it might be a good idea to include one, because the nginx
+developers could always change how their download server is structured. So,
+including it is always a good idea.
+
+=over
+
+    use App::Fetchware;
+    
+    program 'nginx';
+    
+    # lookup_url and mirror are the same thing, because nginx does not seem to have
+    # mirrors. Fetchware, however, requires one, so the same URL is simply
+    # duplicated.
+    lookup_url 'http://nginx.org/download/';
+    mirror 'http://nginx.org/download/';
+    
+    
+    # Must add the developers public keys to my own keyring. These keys are
+    # availabe from http://nginx.org/en/pgp_keys.html Do this with:
+    # gpg \
+    # --fetch-keys http://nginx.org/keys/aalexeev.key\
+    # --fetch-keys http://nginx.org/keys/is.key\
+    # --fetch-keys http://nginx.org/keys/mdounin.key\
+    # --fetch-keys http://nginx.org/keys/maxim.key\
+    # --fetch-keys http://nginx.org/keys/sb.key\
+    # --fetch-keys http://nginx.org/keys/glebius.key\
+    # --fetch-keys http://nginx.org/keys/nginx_signing.key
+    # You might think you could just set gpg_keys_url to the nginx-signing.key key,
+    # but that won't work, because like apache different releases are signed by
+    # different people. Perhaps I could change gpg_keys_url to be like mirror where
+    # you can specify more than one option?
+    user_keyring 'On';
+    # user_keyring specifies to use the user's own keyring instead of fetchware's.
+    # But fetchware drops privileges by default using he user 'nobody.' nobody is
+    # nobody, so that user account does not have a home directory for gpg to read a
+    # keyring from. Therefore, I'm using my own account instead.
+    user 'dly';
+    # The other option, which is commented out below, is to use root's own keyring,
+    # and the no_install option to ensure that root uses its own keyring instead of
+    # nobody's.
+    # noinstall 'On';
+    verify_method 'gpg';
+
+=back
+
+=head2 PHP Programming Language
+
+PHP annoyingly uses a custom Web application on each of its mirror sites to
+serve HTTP downloads. No simple directory listing is available. Therefore, to
+use php with fetchware, custom C<lookup>, C<download>, and C<verify> hooks are
+needed that override fetchware's internal behavior to customize fetchware as
+needed so that it can work with how PHP's site is up.
+
+The C<lookup> hook downloads and parses the L<http://www.php.net/downloads.php>
+page, which lists files availabe for download. This file is parsed using
+L<HTML::TreeBuilder> to determine the latest version. The MD5 sum is also parsed
+out to verify the downloaded file as well.
+
+The C<download> hook is only needed, because http_download_file() presumes that
+the last part of the path is the filename you're downloading. And this is
+annoyingly not the case with the way PHP has its downloading system set up.
+
+The C<verify> hook just uses L<Digest::MD5> to calculate the md5sum of the
+downloaded file, and compares it with the one C<lookup> parses out.
+
+=over
+
+    use App::Fetchware qw(
+        :OVERRIDE_LOOKUP
+        :OVERRIDE_DOWNLOAD
+        :OVERRIDE_VERIFY
+        :DEFAULT
+    );
+    use App::Fetchware::Util ':UTIL';
+    use HTML::TreeBuilder;
+    use URI::Split qw(uri_split uri_join);
+    use Data::Dumper;
+    use HTTP::Tiny;
+    
+    program 'php';
+    
+    lookup_url 'http://us1.php.net/downloads.php';
+    mirror 'http://us1.php.net';
+    mirror 'http://us2.php.net';
+    mirror 'http://www.php.net';
+    
+    # php does *not* use a standard http or ftp mirrors for downloads. Instead, it
+    # uses its Web site, and some sort of application to download files using URLs
+    # such as: http://us1.php.net/get/php-5.5.3.tar.bz2/from/this/mirror
+    #
+    # Bizarrely a URL like
+    # http://us1.php.net/get/php-5.5.3.tar.bz2/from/us2.php.net/mirror
+    # gets you the same page, but on a different mirror. Weirdly, these are direct
+    # downloads without any HTTP redirects using 300 codes, but direct downloads.
+    # 
+    # This is why using fetchware with php you needs a custom lookup handler.
+    # The files you download are resolved to a [http://us1.php.net/distributions/...]
+    # directory, but trying to access a apache styple auto index at that url fails
+    # with a rediret back to downloads.php.
+    my $md5sum;
+    hook lookup => sub {
+        die <<EOD unless config('lookup_url') =~ m!^http://!;
+    php.Fetchwarefile: Only http:// lookup_url's and mirrors are supported. Please
+    only specify a http lookup_url or mirror.
+    EOD
+    
+        msg "Downloading lookup_url [@{[config('lookup_url')]}].";
+        my $dir_list = download_dirlist(config('lookup_url'));
+    
+        vmsg "Parsing HTML page listing php releases.";
+        my $tree = HTML::TreeBuilder->new_from_content($dir_list);
+    
+        # This parsing code assumes that the latest version of php is the first one
+        # we find, which seems like a dependency that's unlikely to change.
+        my $download_path;
+        $tree->look_down(
+            _tag => 'a',
+            sub {
+                my $h = shift;
+                
+                my $link = $h->as_text();
+    
+                # Is the link a php download link or something to ignore.
+                if ($link =~ /tar\.(gz|bz2|xz)|(tgz|tbz2|txz)/) {
+    
+                    # Set $download_path to this tags href, which should be
+                    # something like: /get/php-5.5.3.tar.bz2/from/a/mirror
+                    if (exists $h->{href} and defined $h->{href}) {
+                        $download_path = $h->{href};
+                    } else {
+                        die <<EOD;
+    php.Fetchwarefile: A path should be found in this link [$link], but there is no
+    path it in. No href [$h->{href}].
+    EOD
+                    }
+    
+                    # Find and save the $md5sum for the verify hook below.
+                    # It should be 3 elements over, so it should be the third index
+                    # in the @right array below (remember to start counting 2 0.).
+                    my @right = $h->right();
+                    my $md5_span_tag = $right[2];
+                    $md5sum = $md5_span_tag->as_text();
+                    $md5sum =~ s/md5:\s+//; # Ditch md5 header.
+                }
+            }
+        );
+    
+        # Delete the $tree, so perl can garbage collect it.
+        $tree = $tree->delete;
+    
+        # Determine and return a proper $download_path.
+        # Switch it from [/from/a/mirror] to [/from/this/mirror], so the mirror will
+        # actually return the file to download.
+        $download_path =~ s!/a/!/this/!;
+    
+        vmsg "Determined download path to be [$download_path]";
+        return $download_path;
+    };
+    
+    
+    # I also must hook download(), because fetchware presumes that the filename of
+    # the downloaded file is the last part of the $path, but that is not the case
+    # with the path php uses for file downloads, because it ends in mirror, which is
+    # *not* the name of the file; therefore, I must  hook download() to fix this
+    # problem.
+    hook download => sub {
+        my ($temp_dir, $download_path) = @_;
+    
+        my $http = HTTP::Tiny->new();
+        my $response;
+        for my $mirror (config('mirror')) {
+            my ($scheme, $auth, $path, $query, $fragment) = uri_split($mirror);
+            my $url = uri_join($scheme, $auth, $download_path, undef, undef);
+            msg <<EOM;
+    Downloading path [$download_path] using mirror [$mirror].
+    EOM
+            $response = $http->get($url);
+            
+            # Only download it once.
+            last if $response->{success};
+        }
+    
+        die <<EOD unless $response->{success};
+    php.Fetchwarefile: Failed to download the download path [$download_path] using
+    the mirrors [@{[config('mirror')]}]. The response was:
+    [@{[Dumper($response->{headers})]}].
+    EOD
+        die <<EOD unless length $response->{content};
+    php.Fetchwarefile: Didn't actually download anything. The length of what was
+    downloaded is zero. status [$response->{status}] reason [$response->{reason}]
+    HTTP headers [@{[Dumper($response->{headers})]}].
+    EOD
+    
+        msg 'File downloaded successfully.';
+    
+        # Determine $filename from $download_path
+        my @paths = split('/', $download_path);
+        my ($filename) = grep /php/, @paths;
+    
+        vmsg "Filename determined to be [$filename]";
+    
+        open(my $fh, '>', $filename) or die <<EOD;
+    php.Fetchwarefile: Failed to open [$filename] for writing. OS error [$!].
+    EOD
+    
+        print $fh $response->{content};
+        close $fh or die <<EOD;
+    php.Fetchwarefile: Huh close($filename) failed! OS error [$!].
+    EOD
+    
+        my $package_path = determine_package_path($temp_dir, $filename);
+    
+        vmsg "Package path determined to be [$package_path].";
+    
+        return $package_path
+    };
+    
+    
+    # The above lookup hook parses out the md5sum on the php downloads.php web
+    # site, and stores it in $md5sum, which is used in the the verify hook below.
+    hook verify => sub {
+        # Don't need the $download_path, because lookup above did that work for us.
+        # $package_path is the actual php file that we need to ensure its md5
+        # matches the one lookup determined.
+        my ($download_path, $package_path) = @_;
+    
+        msg "Verifying [$package_path] using md5.";
+    
+        dir <<EOD if not defined $md5sum;
+    php.Fetchwarefile: lookup failed to figure out the md5sum for verify to use to
+    verify that the php version [$package_path] matches the proper md5sum.
+    The md5sum was [$md5sum].
+    EOD
+    
+        my $package_fh = safe_open($package_path, <<EOD);
+    php.Fetchwarefile: Can not open the php package [$package_path]. The OS error
+    was [$!].
+    EOD
+    
+        # Calculate the downloaded php file's md5sum.
+        my $digest = Digest::MD5->new();
+        $digest->addfile($package_fh);
+        my $calculated_digest = $digest->hexdigest();
+    
+        die <<EOD unless $md5sum eq $calculated_digest;
+    php.Fetchwarefile: MD5sum comparison failed. The calculated md5sum
+    [$calculated_digest] does not match the one parsed of php.net's Web site
+    [$md5sum]! Do not trust this downloaded file! Perhaps there's a bug somewhere,
+    or perhaps the php mirror you downloaded this php package from has been hacked.
+    Mirrors do get hacked occasionally, so it is very much possible.
+    EOD
+    
+        msg "ms5sums [$md5sum] [$calculated_digest] match.";
+    
+        return 'Package Verified';
+    };
+
+=back
+
+=head2 PHP Programming Language using its git VCS instead of download mirrors.
+
+PHP like most open source software you can easily download off the internet uses
+a version control system to track changes to its source code. This source code
+repository is basically the same thing as a normal source code distribution
+would be except VCS commands like C<git pull> are used to update it instead of
+checking a mirror for a new version. The Fetchwarefile below for php customizes
+Fetchware to work with php's VCS instead of the traditional downloading of
+actual source code archives.
+
+It overrides lookup() to use a local git repo stored in the $git_repo_dir
+variable. To create a repo just clone php's git repo (see
+http://us1.php.net/git.php for details.). It runs git pull to update the repo,
+and then it runs git tags, and ditches some older junk tags, and finds only the
+tags used for new versions of php. These are sorted using the C<versonstring>
+lookup() algorithm, and the latest one is returned.
+
+download() uses C<git checkout [latesttag]> to "download" php by simply changing
+the working directory to the latest tag. verify() uses git's cool C<verify-tag>
+command to verify the gpg signature. unarchive() is updated to do nothing since
+there is no archive to unarchive. However, because we reuse build(), archive()
+must return a $build_path that build() will change its directory to. start() and
+end() are also overridden, because managing a temporary directory is not needed,
+so, instead, they just do a C<git checkout master> to switch from whatever the
+latest tag is back to master, because git pull bases what it does on what branch
+you're in, so we must actually be a real branch to update git.
+
+=over
+
+    # php-using-git.Fetchwarefile: example fetchwarefile using php's git repo
+    # for lookup(), download(), and verify() functionality.
+    use App::Fetchware qw(:DEFAULT :OVERRIDE_LOOKUP);
+    use App::Fetchware::Util ':UTIL';
+    use Cwd 'cwd';
+    
+    # The directory where the php source code's local git repo is.
+    my $git_repo_dir = '/home/dly/Desktop/Code/php-src';
+    
+    # By default Fetchware drops privs, and since the source code repo is stored in
+    # the user dly's home directory, I should drop privs to dly, so that I have
+    # permission to access it.
+    user 'dly';
+    
+    # Determine latest version by using the tags developers create to determine the
+    # latest version.
+    hook lookup => sub {
+        # chdir to git repo.
+        chdir $git_repo_dir or die <<EOD;
+    php.Fetchwarefile: Failed to chdir to git repo at
+    [$git_repo_dir].
+    OS error [$!].
+    EOD
+    
+        # Pull latest changes from php git repo.
+        run_prog('git pull');
+    
+        # First determine latest version that is *not* a development version.
+        # And chomp off their newlines.
+        chomp(my @tags = `git tag`);
+    
+        # Now sort @tags for only ones that begin with 'php-'.
+        @tags = grep /^php-/, @tags;
+    
+        # Ditch release canidates (RC, alphas and betas.
+        @tags = grep { $_ !~ /(RC\d+|beta\d+|alpha\d+)$/ } @tags;
+    
+        # Sort the tags to find the latest one.
+        # This is quite brittle, but it works nicely.
+        @tags = sort { $b cmp $a } @tags;
+    
+        # Return $download_path, which is only just the latest tag, because that's
+        # all I need to know to download it using git by checking out the tag.
+        my $download_path = $tags[0];
+    
+        return $download_path;
+    };
+    
+    
+    # Just checkout the latest tag to "download" it.
+    hook download => sub {
+        my ($temp_dir, $download_path) = @_;
+    
+        # The latest tag is the download path see lookup.
+        my $latest_tag = $download_path;
+    
+        # checkout the $latest_tag to download it.
+        run_prog('git checkout', "$latest_tag");
+    
+        my $package_path = cwd();
+        return $package_path;
+    };
+    
+    
+    # You must manually add php's developer's gpg keys to your gpg keyring. Do
+    # this by  going to the page: http://us1.php.net/downloads.php . At the
+    # bottom the gpg key "names are listed such as "7267B52D" or "5DA04B5D."
+    # These are their key "names." Use gpg to download them and import them into
+    # your keyring using: gpg --keyserver pgp.mit.edu --recv-keys [key id]
+    hook verify => sub {
+        my ($download_path, $package_path) = @_;
+    
+        # the latest tag is the download path see lookup.
+        my $latest_tag = $download_path;
+    
+        # Run git verify-tag to verify the latest tag
+        my $success = eval { run_prog('git verify-tag', "$latest_tag"); 1;};
+    
+        # If the git verify-tag fails, *and* verify_failure_ok has been turned on,
+        # then ignore the thrown exception, but print an annoying message.
+        unless (defined $success and $success) {
+            unless (config('verify_failure_ok')) {
+                msg <<EOM;
+    Verification failure ok, becuase you've configured fetchware to continue even
+    if it cannot verify its downloads. Please reconsider, because mirror and source
+    code repos do get hacked. The exception that was caught was:
+    [$@]
+    EOM
+            }
+        }
+    };
+    
+    
+    hook unarchive => sub {
+        # there is nothing to archive due to use of git.
+        do_nothing(); # But return the $build_path, which is the cwd().
+        my $build_path = $git_repo_dir;
+        return $build_path;
+    };
+    
+    # It's a git tag, so it lacks an already generated ./configure, so I must use
+    # ./buildconf to generate one. But it won't work on php releases, so I have to
+    # force it with --force to convince ./buildconf to run autoconf to generate the
+    # ./configure program to configure php for building.
+    build_commands './buildconf --force', './configure', 'make';
+
+    # Add any custom configure options that you may want to add to customize
+    # your build of php, or control what php extensions get built.
+    #configure_options '--whatever you --need ok';
+    
+    # start() creates a tempdir in most cases this is exactly what you want, but
+    # because this Fetchwarefile is using git instead. I don't need to bother with
+    # creating a temporary directory.
+    hook start => sub {
+        # But checkout master anyway that way the repo can be in a known good state
+        # so lookup()'s git pull can succeed.
+        run_prog('git checkout master');
+    };
+    
+    
+    # Switch the local php repo back to the master branch to make using it less
+    # crazy. Furthermore, when using git pull to update the repo git uses what
+    # branch your on, and if I've checked out a tag, I'm not actually on a branch
+    # anymore; therefore, I must switch back to master, so that the git pull when
+    # this fetchwarefile is run again will still work.
+    hook end => sub {
+        run_prog('git checkout master');
+    };
+
+=back
+
+=head2 MariaDB Database
+
+This example MariaDB Fetchwarefile parses the MariaDB download page to determine
+what the latest version is based on what C<filter> option you set up. Once this
+is determined, the download path is created based on the weird path that MariaDB
+uses on its mirrors.
+
+Like PHP MariaDB uses some annoying software on their Web site to presumably
+track downloads. This software makes use of AJAX, which is vastly beyone the
+capabilities of HTML::TreeBuilder to parse, because it needs a working
+JavaScript environment. Therefore, the example Fetchwarefile below has no way of
+verifying the MySQL downloads. This could be fixed by using a Perl Web scraping
+module that can deal with JavaScript.
+
+=over
+
+    use App::Fetchware;
+    
+    program 'MariaDB';
+    
+    # MariaDB uses ccache, which wants to create a ~/.ccache cache, which it can't
+    # do when it's running as nobody, so use a real user account to ensure ccache
+    # has a cache directory it can write to.
+    user 'dly';
+    
+    lookup_url 'https://downloads.mariadb.org/';
+    
+    # Below are the two USA mirrors where I live. Customize them as you need based
+    # on the mirrors listed on the download page (https://downloads.mariadb.org/ and
+    # then click on which version you want, and then click on the various mirrors
+    # by country. All you need is the scheme (ftp:// or http:// part) and the
+    # hostname without a slash (ftp.osuosl.org or mirror.jmu.edu). Not the full path
+    # for each mirror.
+    mirror 'http://ftp.osuosl.org';
+    mirror 'http://mirror.jmu.edu';
+    
+    # The filter option is key to the custom lookup hook working correctly. It must
+    # represent the text that corresponds to the latest GA release of MariaDB
+    # available. It should be 'Download 5.5' for 5.5 or 'Download 10.0' for the
+    # newver but not GA 10.0 version of MariaDB.
+    filter 'Download 5.5';
+    
+    hook lookup => sub {
+        vmsg "Downloading HTML download page listing MariaDB releases.";
+        my $dir_list = http_download_dirlist(config('lookup_url'));
+    
+        vmsg "Parsing HTML page listing MariaDB releases.";
+        my $tree = HTML::TreeBuilder->new_from_content($dir_list);
+    
+        # This parsing code assumes that the latest version of php is the first one
+        # we find, which seems like a dependency that's unlikely to change.
+        my @version_number;
+        $tree->look_down(
+            _tag => 'a',
+            sub {
+                my $h = shift;
+                
+                my $link = $h->as_text();
+    
+                # Find the filter which should be "Download\s[LATESTVERSION]"
+                my $filter = config('filter');
+                if ($link =~ /$filter/) {
+                    # Parse out the version number.
+                    # It's just the second space separated field.
+                    push @version_number, (split ' ', $link)[1];
+                }
+            }
+        );
+    
+        # Delete the $tree, so perl can garbage collect it.
+        $tree = $tree->delete;
+    
+        # Only one version should be found.
+        die <<EOD if @version_number > 1;
+    mariaDB.Fetchwarefile: multiple version numbers detected. You should probably
+    refine your filter option and try again. Filter [@{[config('filter')]}].
+    Versions found [@version_number].
+    EOD
+    
+        # Construct a download path using $version_number[0].
+        my $filename = 'mariadb-' . $version_number[0] . '.tar.gz';
+    
+        # Return a proper $download_path, so That I do not have to hook download(),
+        # but can reuse Fetchware's download() subroutine.
+        my $weird_prefix = '/mariadb-' . $version_number[0] . '/kvm-tarbake-jaunty-x86/';
+        my $download_path = '/pub/mariadb' . $weird_prefix .$filename;
+        return $download_path;
+    };
+    
+    # Make verify() failing to verify MariaDB ok, because parsing out the MD5 sum
+    # would require a Web scraper that supports javascript, which HTML::TreeBuilder
+    # obviously does not.
+    verify_failure_ok 'On';
+    
+    # Use build_commands to configure fetchware to use MariaDB's BUILD script to
+    # build it. See https://mariadb.com/kb/en/generic-build-instructions/ for
+    # instructions on the different BUILD  cmake scripts that are available.
+    build_commands 'BUILD/compile-pentium64-max';
+    
+    # Use install_commands to tell fetchware how to install it. I could leave this
+    # out, but it nicely documents what command is needed to install MariaDB
+    # properly.
+    install_commands 'make install';
+
+=back
+
+=head2 PostgreSQL Database
+
+Below is a example Fetchwarefile that overrides lookup() to determine the latest
+version, but manages to avoid overriding anything else. It uses the same style
+as the rest downloading an HTML page that lists the version numbers on it
+somewhere. Then it parses the HTML with HTML::TreeBuilder. It populates an
+array, and then uses L<App::Fetchware>'s lookup_by_versionstring() to determine
+which version is the latest one. This is then concatenated with a bunch of other
+stuff to determine the $download_path.
+
+MD5 verification is supported by simply specifying a C<md5_url> option, because
+by default fetchware uses the C<lookup_url> to determine where to download the
+md5sum from, but that won't work with PostgreSQL, because it's download system
+has the md5sum on the download C<mirror> instead of the C<lookup_url>.
+
+=over
+
+    use App::Fetchware qw(:DEFAULT :OVERRIDE_LOOKUP);
+    use App::Fetchware::Util ':UTIL';
+    
+    use HTML::TreeBuilder;
+    
+    program 'postgres';
+    
+    # The Postgres file browser URL lists the available versions of Postgres.
+    lookup_url 'http://www.postgresql.org/ftp/source/';
+    
+    # Mirror URL where the file browser links to download them from.
+    my $mirror = 'http://ftp.postgresql.org';
+    mirror $mirror;
+    
+    # The Postgres file browser URL that is used for the lookup_url lists version
+    # numbers of Postgres like v9.3.0. this lookup hook parses out the list of
+    # theses numbers, determines the latest one, and constructs a $download_path to
+    # return for download to use to download based on what I set my mirror to.
+    hook lookup => sub {
+        my $dir_list = no_mirror_download_dirlist(config('lookup_url'));
+    
+        my $tree = HTML::TreeBuilder->new_from_content($dir_list);
+    
+        # Parse out version number directories.
+        my @ver_nums;
+        my @list_context = $tree->look_down(
+            _tag => 'a',
+            sub {
+                my $h = shift;
+    
+                my $link = $h->as_text();
+    
+                # Is this link a version number or something to ignore?
+                if ($link =~ /^v\d+\.\d+(.\d+)?$/) {
+                    # skip version numbers that are beta's, alpha's or release
+                    # candidates (rc).
+                    return if $link =~ /beta|alpha|rc/i;
+                    # Strip useless "v" that just gets in the way later when I
+                    # create the $download_path.
+                    $link =~ s/^v//;
+                    push @ver_nums, $link;
+                }
+            }
+        );
+    
+        # Turn @ver_num into the array of arrays that lookup_by_versionstring()
+        # needs its arguments to be in.
+        my $directory_listing = do {
+            my $arrayref_of_arrays_directory_listing = [];
+            for my $ver_num (@ver_nums) {
+                push @$arrayref_of_arrays_directory_listing,
+                    [$ver_num];
+            }
+            $arrayref_of_arrays_directory_listing;
+        };
+        # Find latest version.
+        my $latest_ver = lookup_by_versionstring($directory_listing);
+    
+        # Return $download_path.
+        my $download_path = '/pub/source/'. "v$latest_ver->[0][0]" .
+            "/postgresql-$latest_ver->[0][0].tar.bz2";
+        return $download_path;
+    };
+    
+    # MD5sums are stored on the download site, so use them to verify the package.
+    verify_method 'md5';
+    # But they are *not* stored on the original "lookup_url" site, so I must provide
+    # a md5_url pointing to the download site.
+    md5_url $mirror;
+
+=back
+
 =head1 CREATING A FETCHWARE EXTENSION
 
 =over
 
 =item WARNING
 
-Currently, fetchware's extension system is B<ALPHA>, and is subject to change at
-any time. This, however, is unlikely, but it could happen. Most likely, some new
-API subroutines will just be introducted such as check_syntax() to check syntax
-for extensions, and new(), which will allow fetchware extensions to customize
-the C<fetchware new> command.
+Currently, fetchware's extension system is B<BETA>, and unlikely to change, but
+changes may happen most likely just in the form of bug fixes. This, however, is
+unlikely, but it could happen. Most likely, just some minor bug fixes will occur
+to the API not any major changes or refactors or rewrites. I'm considering
+"genericizing" make_test_dist() so Fetchware extension authors can reuse it to
+test their extensions.
 
 =back
 
 Fetchware's main program C<fetchware> uses App::Fetchware's short and simple API
 to implement fetchware's default behavior; however, other styles of source code
 distributions exist on the internet that may not fit inside App::Fetchware's
-capabilities. In addition to its flexible configuration file sytax, that is why
-fetchware allows modules other than App::Fetchware to provide it with its
-behavior.
+capabilities. That is why, in addition to its flexible configuration file
+syntax, fetchware allows modules other than App::Fetchware to provide it with
+its behavior.
 
 =head2 How the API works
 
 When fetchware installs or upgrades something it executes the API subroutines
-start(), lookup(), download(), verify(), unarchive(), build(), install(), and
-end() in that order. And when fetchware uninstalls an installed package it
-executes the API subroutines start(), part of build(), uninstall(), and end().
+check_syntax(), start(), lookup(), download(), verify(), unarchive(), build(),
+install(), and end() in that order. And when fetchware uninstalls an installed
+package it executes the API subroutines check_syntax(), start(), unarchive(),
+uninstall(), and end(). Upgrade is basically the exact same thing as install(),
+but it compares version numbers using the upgrade() API subroutine. And
+C<fetchware new> obviously just calls new() and new_install().
 
 =head2 Extending App::Fetchware
 
@@ -3080,14 +5078,17 @@ features especially using @INC for subclassing, which App::Fetchware does not
 use.
 
 The same terminology as used in OOP is also used here in App::Fetchware, because
-the concepts are nearly the same they're simply implemented differently.
+the concepts are nearly the same--they're simply implemented differently.
 
 =head3 API subroutines
 
 These are the subroutines that App::Fetchware implements, and that fetchware
-uses to implement its desired behavior. They are start(), lookup(), download(),
-verify(), unarchive(), build(), install(), uninstall(), and end(). All must be
-implemented in a App::Fetchware L<subclass>.
+uses to implement its desired behavior. They are new(), new_install(),
+check_syntax(), start(), lookup(), download(), verify(), unarchive(), build(),
+install(), uninstall(), upgrade(), and end(). All must be
+implemented or "inherited" from App::Fetchware using L<App::Fetchware::ExportAPI> as
+discussed below in L<Implement your fetchware extension.> in a App::Fetchware
+L<subclass>.
 
 =head3 override
 
@@ -3116,13 +5117,13 @@ To create a fetchware extension you must understand how they work:
 =item 1. First a Fetchwarefile is created, and what module implements App:Fetchware's API is declared with a C<use App::Fetchware...;> line. This line is C<use App::Fetchware> for default Fetchwarefiles that use App::Fetchware to provide C<fetchware> with the API it needs to work properly.
 
 =item 2. To use a fetchware extension, you simply specify the fetchware
-extension you want to use with a C<use App::Fetchware...;> instead of specifying
+extension you want to use with a C<use App::FetchwareX::...;> instead of specifying
 C<use App::Fetchware> line in your Fetchwarefile. You B<must> replace the
 App::Fetchware import with the extension's. Both cannot be present. Fetchware
 will exit with an error if you use more than one App::Fetchware line without
 specifying specific subroutines in all but one of them.
 
-=item 3. Then when C<fetchware> parses this Fetchwarefile when you use it to install, upgrade, or uninstall something, This C<use App::Fetchware...;> line is what imports App::Fetchware's API subroutines into C<fetchware>'s namespace.
+=item 3. Then when C<fetchware> parses this Fetchwarefile when you use it to install, upgrade, or uninstall something, This C<use App::FetchwareX::...;> line is what imports App::Fetchware's API subroutines into C<fetchware>'s namespace.
 
 =back
 
@@ -3156,6 +5157,21 @@ consult their full documentation in L<FETCHWAREFILE API SUBROUTINES>.
 
 =over
 
+=item B<my ($program_name, $fetchwarefile) = new($term, $program_name)> -
+Along with new_install() implements Fetchware's new command for helping users
+create new Fetchwarefiles using a Q&Z wizard interface.
+
+=item B<my $fetchware_package_path = new_install($program_name, $fetchwarefile)>
+- new()'s sister subroutine for implementing the Q&A wizard interface for
+Fetchware's new command. Just used to keep root to make
+ask_to_install_now_to_test_fetchwarefile() work for system level installs while
+keeping drop privs enabled by default.
+
+=item B<'Syntax Ok' = check_syntax()> - Checks the user's Fetchwarefile, but only
+at Fetchware's level. Perl level syntax errors are not checked. PPI is not used
+to parse the file. Instead only high-level Fetchware specific syntax errors are
+checked.
+
 =item B<my $temp_dir = start(KeepTempDir => 0 | 1)> - Gives your extension a chance to do anything needed before the rest of the API subroutines get called.  App::Fetchware's C<start()> manages App::Fetchware's temporary directory creation. If you would like to also use a temporary directory, you can just use L<App::Fetchware::ExportAPI> to "inherit" App::Fetchware's start() instead of implementing it yourself.
 
 =item B<my $download_url = lookup()> - Determines and returns a download url that C<download()> receives and uses to download the archive for the program.o
@@ -3174,6 +5190,11 @@ consult their full documentation in L<FETCHWAREFILE API SUBROUTINES>.
 
 =item B<uninstall($build_path)> - Uninstalls an already installed program installed with the same App::Fetchware extension.
 
+=item B<$upgrade = upgrade($download_path, $fetchware_package_path)> - uses its
+two arguments to determine if a new version is available to upgrade to, or if
+the currently installed version is the latest version, and no additional
+upgrades are needed.
+
 =back
 
 Also, keep in mind the order in which these subroutines are called, what
@@ -3181,11 +5202,18 @@ arguments they receive, and what their expected return value is.
 
 =over
 
-=item B<install> - start(), lookup(), download(), verify(), unarchive(), build(), install(), and end().
+=item B<new> = Just new() and new_install().
 
-=item B<upgrade> - Exactly the same as install.
+=item B<install> - check_syntax(), start(), lookup(), download(), verify(), unarchive(), build(), install(), and end().
 
-=item B<uninstall> - You might think its just uninstall(), but its not.  uninstall() calls start(), download() (to copy the already installed fetchware package from the fetchware package database to the temporary directory), unarchive(), uninstall(), and end().
+=item B<upgrade> - check_syntax(), start(), lookup(), I<upgrade()>, download(),
+verify(), unarchive(), build(), install(), and end().
+
+=item B<upgrade-all> - Is the same as upgrade, because it just call upgrade for
+each fetchware package that is installed in the fetchware package database.
+
+=item B<uninstall> - You might think its just uninstall(), but it does not.
+check_syntax(), start(), unarchive(), uninstall(), and end().
 
 =back
 
@@ -3225,7 +5253,7 @@ Since you've designed your new fetchware extension, now it's time to code it up.
 The easiest way to do so, is to just take an existing extension, and just copy
 and paste it, and then delete its specifics to create a simple extension
 skeleton. Then just follow the steps below to fill in this skeleton with the
-specifics needed for you fetchware extension.
+specifics needed for your fetchware extension.
 
 =over
 
@@ -3243,13 +5271,31 @@ App::Fetchware's API subroutines that you would like to keep. An example.
 
     # Use App::Fetchware::ExportAPI to set up proper exports this fetchware
     # extension.
-    use App::Fetchware::ExportAPI KEEP => [qw(start end)],
-        OVERRIDE => [qw(lookup download verify unarchive build install uninstall)]
+    use App::Fetchware::ExportAPI KEEP => [qw(new_install start end)],
+        OVERRIDE => [qw(new check_syntax lookup download verify
+        unarchive build install uninstall upgrade)]
     ;
 
+There two types of subroutines ExportAPI helps you with:
+
+=over
+
+=item *
+
+B<KEEP> - Specifies which API subroutines you will "keep" or perhaps "inherit"
+from App::Fetchware. Usually this is just start() and end() to manage the
+C<temp_dir> for you.
+
+=item *
+
+B<OVERRIDE> = Specifies which API subroutines you will "override," or implement
+yourself.
+
+=back
+
 Second, use L<App::Fetchware::CreateConfigOptions> to create all of the
-configuration options (such as temp_dir, no_install, and so on.) you want your
-fetchware extension to have.
+configuration options (such as C<temp_dir>, C<no_install>, and so on.) you want
+your fetchware extension to have.
 
 There are four types of configuration options.
 
@@ -3277,6 +5323,16 @@ to 0 to support more than just Perl's 0 or undef being false.
 I<Examples:> C<verify_failure_ok>, C<no_install>, and C<stay_root>.
 
 =back
+
+Additionally, there is another type of configuration option that only
+App::Fetchware::CreateConfigOptions uses:
+
+=over
+
+=item C<IMPORT> - Allows you to import already defined configuration options
+from App::Fetchware into your Fetchware extension. For exmaple, you might also
+want a C<temp_dir> or C<no_install> configuration option, and the C<IMPORT> type
+allows you to easily import one and document the fact that it is imported.
 
 An example.
 
@@ -3313,6 +5369,8 @@ An example for overriding lookup() is below.
         # Return the required $download_url.
         return $download_url;
     }
+
+=back
 
 =back
 
@@ -3386,7 +5444,12 @@ there if you need it.
 
 =back
 
-=item * Temporary Directory subroutines - L<create_tempdir()|App::Fetchware::Util/create_tempdir()>, L<original_cwd()|App::Fetchware::Util/original_cwd()>, and L<cleanup_tempdir()|App::Fetchware::Util/cleanup_tempdir()>.
+=item * Temporary Directory subroutines -
+L<create_tempdir()|App::Fetchware::Util/create_tempdir()>,
+L<original_cwd()|App::Fetchware::Util/original_cwd()>, and
+L<cleanup_tempdir()|App::Fetchware::Util/cleanup_tempdir()>. Only needed if you
+don't reuse App::Fetchware's own start() and end() subroutines that make use of
+thse temporary directory subroutines for you.
 
 =over
 
@@ -3497,6 +5560,29 @@ only in your test suite.
 
 =back
 
+=item L<App::Fetchware::Fetchwarefile>
+
+Helper OO class for new() API subroutine. Allows you to programatically build a
+Fetchwarefile for the user using a small API instead of manually concatenating
+tons of strings constantly worrying about wordwrap and whitespace.
+
+=over
+
+=item L<new() constructor|App::Fetchware::Fetchwarefile/new()> -
+App::Fetchware::Fetchwarefile is actually Object-oriented unlike the rest of
+Fetchware's internals, so new() is its constructor.
+
+=item L<config_options()|App::Fetchware::Fetchwarefile/config_options()> - Used
+to add the actual configuration options and their values to the Fetchwarefile
+object.
+
+=item L<generate()|App::Fetchware::Fetchwarefile/generate()> - Returns the
+"generated" Fetchwarefile. This method does all of the string concatenation for
+you in order to create the Fetchwarefile specfied in your new() and
+config_options() calls.
+
+=back
+
 =item L<App::Fetchware's OVERRIDE_* export tags.|FETCHWAREFILE API SUBROUTINES>
 
 App::Fetchware's main API subroutines, especially the crazy complicated ones
@@ -3506,6 +5592,28 @@ App::Fetchware extensions to also use some or most of these component
 subroutines when they override a App::Fetchware API subroutine.
 
 =over
+
+=item L<new()'s OVERRIDE_NEW export tag.|new() API REFERENCE>
+
+The export tag exports all of the helper subroutines new() uses to implement its
+functionality. Some like get_lookup_url(), get_verification(), and
+get_filter_option() are quite specific to App::Fetchware, but extension_name,
+fetchwarefile_name(), opening_message(), prompt_for_other_options(), and
+edit_manually() are nice and generic, and should be appropriate for any
+Fetchware extension.
+
+=item L<new_install()'s OVERRIDE_NEW_INSTALL export tag.|new_install() API REFERENCE>
+
+new_install() only exports ask_to_install_now_to_test_fetchwarefile(), and most
+Fetchware extensions should probably just "inherit" new_install(), because
+new_install()'s only real purpose was making
+ask_to_install_now_to_test_fetchwarefile() work when fetchware drops privs.
+
+=item L<check_syntax()'s OVERRIDE_CHECK_SYNTAX export tag|check_syntax() API REFERENCE>
+
+check_syntax() only has the check_config_options() helper subroutine that is
+meant for reuse by Fetchware extensions, so they can check their syntax just as
+Fetchware itself does.
 
 =item L<lookup()'s OVERRIDE_LOOKUP export tag.|lookup() API REFERENCE>
 
@@ -3568,6 +5676,10 @@ install() also uses build()'s run_star_commands().
 uninstall() actually has no exports of its own, but it does make use of
 build() and install()'s exports.
 
+=item upgrade()'s OVERRIDE_UNINSTALL export tag.
+
+upgrade() also has no exports of its own, and does not use anyone elses.
+
 =back
 
 =back
@@ -3590,7 +5702,7 @@ Be sure to document:
 
 =head2 Write tests for your fetchware extension
 
-Use perls veneralbe Test::More, and whatever other Perl TAP testing modules you
+Use perls venerable Test::More, and whatever other Perl TAP testing modules you
 need to be sure your fetchware extension works as expected.
 
 L<Test::Fetchware/> has a few testing subroutines that fetchware itself uses
@@ -3724,6 +5836,31 @@ upload them to CPAN. See L<Module::Starter> for a simple way to create a
 skeleton for a new Perl module, and L<dzil|http://dzil.org/index.html> is beyond
 amazing, but has insane dependencies and a significant learning curve.
 
+=head2 Fetchware Extension Best Practices
+
+Below are a few points to keep in mind when creating a Fetchware extension that
+the documentation itself fails to mention prominently or that otherwise slip
+through the cracks, but are still important to keep in mind while designing and
+implementing a Fetchware extension.
+
+=over
+
+=item * Actually implement the new() API subroutine to help your Fetchware
+extension's users create new Fetchwarefiles for your Fetchware extension. And
+use L<App::Fetchware::Fetchwarefile> to help you generate the Fetchwarefile.
+
+=item * Only use L<run_prog()|App::Fetchware::Util/run_prog()> to execute
+external programs, because it supports Fetchware's verbose (-v) and quiet (-q)
+options. If you really do need something else, then checkout run_prog()'s
+documentation for how to see if verbose or quiet options are enabled.
+
+=item * Use L<App::Fetchware::Util>'s logging subroutines msg() and vmsg() to
+print messages out to your user to tell them what you are doing. I recommened a
+msg() or two in each or of your main API subroutines, and then at least one
+vmsg() in each and any helper subroutines you may write and use.
+
+=back
+
 =head1 FETCHWAREFILE API SUBROUTINES
 
 The subroutines below B<are> Fetchwarefile's API subroutines or helper
@@ -3732,6 +5869,349 @@ fetchware's configuration file syntax, then see the section
 L<FETCHWAREFILE CONFIGURATION SYNTAX> for more information. For additional
 information on how to keep or override these API subroutines in a fetchware
 extension see the section L<CREATING A FETCHWARE EXTENSION>
+
+=head2 new()
+
+    my ($program_name, $fetchwarefile) = new($term, $program_name);
+
+    # Or in an extension, you can return whatever list of variables you want,
+    # and then cmd_new() will provide them as arguments to new_install() except
+    # a $term Term::ReadLine object will precede the others.
+    my ($term, $program_name, $fetchwarefile, $custom_argument1, $custom_argument2)
+        = new($term, $program_name);
+
+new() is App::Fetchware's API subroutine that implements fetchware's new
+command. new() calls a bunch of helper subroutines that implement
+the algorithm fetchware uses to build new Fetchwarefiles automagically for the
+user. The algorithm is dead stupid:
+
+=over
+
+=item 1. Ask for lookup_url & download it.
+
+=item 2. Analyze the contents of the output from the lookup_url.
+
+=item 3. Build the Fetchwarefile according to the output.
+
+=item 4. Ask other questions as needed.
+
+=back
+
+new() uses Term::UI, which in turn uses Term::ReadLine to implement the
+character based question and anwser wizard interface. A Term::ReadLine/Term::UI
+object is passed to new() as its first argument. new() also uses
+L<App::Fetchware::Fetchwarefile> to help create and help generate the
+Fetchwarefile for the user.
+
+new()'s argument is the program name that the user has specified on the command
+line. It will be undef if the user did not specify one on the command line.
+
+Whatever scalars (not references just regular strings) that new() returns will
+be shared with new()'s sister API subroutine new_install() that is called after
+new() is called by cmd_install(), which implements fetchware's new command.
+new_install() is called in the parent process, so it does have root permissions,
+so be sure to test it as root as well.
+
+=over
+
+=item drop_privs() NOTES
+
+This section notes whatever problems you might come accross implementing and
+debugging your Fetchware extension due to fetchware's drop_privs mechanism.
+
+See L<Util's drop_privs() subroutine for more info|App::Fetchware::Util/drop_privs()>.
+
+=over
+
+=item *
+
+This subroutine is B<not> run as root; instead, it is run as a regular user
+unless the C<stay_root> configuration option has been set to true.
+
+=back
+
+=back
+
+=head2 new() API REFERENCE
+
+Below are the API routines that new() uses to create the question and answer
+interface for helping to build new Fetchwarefiles and fetchware packages.
+
+=head3 extension_name();
+
+    extension_name(__PACKAGE__);
+
+This subroutine sets the name of the extension that this implementation of new()
+wants to be called by. It should be C<App::FetchwareX::ExtensionName> the full
+name of your extension to make looking it up in documentaiton easier.
+
+All of new()'s API subroutines (everything in App::Fetchware's OVERRIDE_NEW
+export tag) use extension_name() to deterime what the this extension should be
+called. This is really only used in error messages and occasionally in some of
+the questions that new's API subroutines will ask the user. But this subroutine
+is important, because it allows extension authors to change all of the
+C<App::Fetchware> references in the error messages to their own fetchware
+extensions name.
+
+extension_name() is a singleton, and can only be set once. After being set only
+once any attempts to set it again will result in an exception being thrown.
+Furthermore, any calls to it without arguments will result in it returning the
+one scalar argument that was set the first time it was called.
+
+=head3 opening_message();
+
+    opending_message($opening_message);
+
+opening_message() takes the specified $opening_message and just prints it to
+C<STDOUT>. This subroutine may seem useless, you could just use print, but using
+it instead of print helps document that what you're doing is printing the
+opening message to the user.
+
+=head3 fetchwarefile_name();
+
+    # $fetchwarefile_name comes from the first command line option to fetchware
+    # new: fetchware new $fetchwarefile_name, which is optional, hence the need
+    # for fetchwarefile_name().
+    sub new {
+        my $fetchwarefile_name = shift;
+
+        my $program_name = fetchwarefile_name($term, program => $fetchwarefile_name)
+
+If when the user called C<fetchware new $fetchwarefile_name>, if they provided a
+$fetchwarefile_name name on the command line, then fetchwarefile_name() simply
+returns what the user provided, but if they did not, then $fetchwarefile_name in
+the call to fetchwarefile_name() is going to be undef. In that case,
+fetchwarefile_name() uses the provided Term::UI in the provided $term variable,
+to ask the user what the name of their fetchwarefile should be, which it returns
+back to the caller.
+
+=head3 get_lookup_url()
+
+    my $lookup_url = get_lookup_url($term);
+
+Uses $term argument as a L<Term::ReadLine>/L<Term::UI> object to interactively
+explain what a lookup_url is, and to ask the user to provide one and press
+enter.
+
+=head3 download_lookup_url()
+
+    my $filename_listing = download_lookup_url($term, $lookup_url);
+
+Attempts to download the lookup_url the user provides. Returns it after parsing
+it using parse_directory_listing() from L<App::Fetchware> that lookup() itself
+uses.
+
+=head3 get_mirrors()
+
+    my $mirrors_hashref = get_mirrors($term, $filename_listing);
+
+    # $mirrors_hashref = (
+    #   mirrors => [
+    #       'ftp://some.mirror/mirror',
+    #       'http://some.mirror/mirror',
+    #       'file://some.mirror/mirror',
+    #   ],
+    # );
+
+Asks the user to specify at least one mirror to use to download their archives.
+It also reiterates to the user that the C<lookup_url> should point to the
+author's original download site, and B<not> a 3rd party mirror, because md5sums,
+sha1sums, and gpg signatures should B<only> be downloaded from the author's
+download site to avoid them being modified by a hacked 3rd party mirror. While
+C<mirror> should be configured to point to a 3rd party mirror to lessen the load
+on the author's offical download site.
+
+After the user enters at least one mirror, get_mirrors() asks the user if they
+would like to add any additional mirrors, and it adds them if the user specifies
+them.
+
+The list of the mirrors the user specified is returned as a hash with only one
+key C<mirror>, and a value that is an arrayref of mirrors that the user has
+specified. The caller, then should call append_options_to_fetchwarefile() to add
+this list of mirrors to the user's Fetchwarefile.
+
+=head3 get_verification()
+
+    my $verification_hashref = get_verification($term, $filename_listing, $lookup_url);
+
+    # $verification_hashref = (
+    #   gpg_keys_url => 'http://main.mirror/distdir',
+    #   verification_method => 'gpg',
+    # );
+
+Parses $filename_listing to determine what type of verification is available.
+Prefering gpg, but falling back on sha1, and then md5 if gpg is not available.
+
+If the type is gpg, then get_verification() will ask the user to specify a
+C<gpg_keys_url>, which is required for gpg, because fetchware needs to be able
+to import the needed keys to be able to use those keys to verify package
+downloads. If this URL is not provided by the author, then get_verification()
+will ask the user if they would like to import the author's key into their own
+gpg public keyring. If they would, then get_verification() will use the
+C<user_keyring> C<'On'> option to use the user's public keyring instead of
+fetchware's own keyring. And if the user does not want to use their own gpg
+public keyring, then get_verification will fall back to sha1 or md5 setting
+C<verify_method> to sha1 or md5 as needed.
+
+Also, adds a gpg_keys_url option if a C<KEYS> file is found in
+$filename_listing.
+
+If no verification methods are available, fetchware will print a big nasty
+warning message, and offer to use C<verify_failure_ok> to make such a failure
+cause fetchware to continue installing your software.
+
+Returns a hashref of options for the user's Fetchwarefile. You're responsible
+for calling append_options_to_fetchwarefile() to add them to the user's
+Fetchwarefile, or perhaps the caller could analyze them in some way, before
+adding them if needed. The keys are the names of the configuration options, and
+the values are their values.
+
+=head3 get_filter_option()
+
+    $filter_hashref = get_filter_option($term, $filename_listing);
+
+    # $filter_hashref = (
+    #   filter => 'user specfied filter option',
+    # );
+
+Analyzes $filename_listing and asks the user whatever questions are needed by
+fetchware to determine if a C<filter> configuration option is needed, and if it
+is what it should be. C<filter> is simply a perl regex that the list of files
+that fetchware downloads is checked against, and only files that match this
+regex will fetchware consider to be the latest version of the software package
+that you want to install. The C<filter> option is needed, because some mirrors
+will have multiple software packages in the same directory or multitple
+different versions of one piece of software in the same directory. An example
+would be Apache, which has Apache versions 2.0, 2.2, and 2.4 all in the same
+directory. The C<filter> option is how you differentiate between them.
+
+If a filter was provided by the user than it is returned as a hashref with
+C<filter> as the key for use with append_options_to_fetchwarefile(), or for
+further analysis by extension authors.
+
+=head3 prompt_for_other_options()
+
+    prompt_for_other_options($term,
+        temp_dir => {
+            prompt => <<EOP,
+    What temp_dir configuration option would you like? 
+    EOP
+            print_me => <<EOP
+    temp_dir is the directory where fetchware creates a temporary directory that
+    stores all of the temporary files it creates while it is building your software.
+    The default directory is /tmp on Unix systems and C:\\temp on Windows systems.
+    EOP
+        },
+            ...
+    );
+
+Accepts a Term::Readline/Term::UI object as an argument to use to ask the user
+questions, and a gigantic hash of hashes in list form. The hash of hashes,
+%option_description, argument incluedes the C<prompt> and C<print_me> options
+that are then passed through to Term::UI to ask the user what argument they want
+for each specified option in the %option_description hash.
+
+The user's answers are tallied up an returned as a hash reference.
+
+=head3 edit_manually()
+
+    $fetchwarefile = edit_manually($term, $fetchwarefile);
+
+edit_manually() asks the user if they would like to edit the specified
+$fetchwarefile manually. If the user answers no, then nothing is done. But if
+the user answers yes, then fetchware will open their favorit editor either using
+the C<$ENV{EDITOR}> environment variable, or fetchware will ask the user what
+editor they would like to use. Then this editor, and a temporary fetchwarefile
+are opened, and the user can edit their Fetchwarefile as they please. If they
+are not satisfied with their edits, and wan to undo them, they can delete the
+entire file, and write a size 0 file, which will cause fetchware to ignore the
+file they edited. If the write a file with a size greater than 0, then the file
+the user wrote, will be used as their Fetchwarefile.
+
+=head2 new_install()
+
+    my $fetchware_package_path = new_install($program_name, $fetchwarefile);
+
+=over
+
+=item Configuration subroutines used:
+
+=over
+
+=item All of them, because it calls bin/fetchware's cmd_install(),
+which in turn calls all of the API subroutines that fetchware's install command
+does.
+
+=back
+
+=back
+
+Exists separate from new(), because new() drops privileges like most other
+fetchware commands do. But the new command includes the ability to ask the user
+if they want to install the associated program from their newly created
+Fetchwarefile, which requires root privileges. Therefore, we must also have a
+API subroutine that runs in the root privileged parent to that the install
+commands will run with proper permissions when fetchware is run as root.
+
+=over
+
+=item drop_privs() NOTES
+
+This section notes whatever problems you might come accross implementing and
+debugging your Fetchware extension due to fetchware's drop_privs mechanism.
+
+See L<Util's drop_privs() subroutine for more info|App::Fetchware::Util/drop_privs()>.
+
+=over
+
+=item *
+
+When fetchware is run as root, new_install() is called in the parent process
+with root permissions so that you can call the 
+ask_to_install_now_to_test_fetchwarefile() helper subroutine. I suppose you
+could do something else in your extension if it makes sense, but that's what
+this API sub is intended for. The ask_to_install_now_to_test_fetchwarefile()
+helper subroutine needs root permissions (Unless the Fetchwarefile has been
+setup so that the user running it has access.), because it will call fetchware's
+cmd_install() to directly cause fetchware to go ahead and install the previoulsy
+generated Fetchwarefile.
+
+=back
+
+=back
+
+=head2 new_install() API REFERENCE
+
+The subroutines below are used by new_install() to provide the new_install functionality
+for fetchware. If you have overridden the new_install() handler, you may want to use
+some of these subroutines so that you don't have to copy and paste anything from
+new_install.
+
+App::Fetchware is B<not> object-oriented; therefore, you B<can not> subclass
+App::Fetchware to extend it! 
+
+=head3 ask_to_install_now_to_test_fetchwarefile()
+
+    my $fetchware_package_path = ask_to_install_now_to_test_fetchwarefile($term, \$fetchwarefile, $program_name);
+    my $fetchwarefile_filename = ask_to_install_now_to_test_fetchwarefile($term, \$fetchwarefile, $program_name);
+
+This subroutine asks the user if they want to install the Fetchwarefile that
+this subroutine has been called with. If they say yes, then the Fetchwarefile is
+passed on to cmd_install() to do all of the installation stuff. If they say no,
+then fetchware saves the file to C<"$program_name.Fetchwarefile"> or
+ask_to_install_now_to_test_fetchwarefile() will ask the user where to save the
+file until the user picks a filename that does not exist.
+
+=over 
+NOTE: ask_to_install_now_to_test_fetchwarefile() has an infinite loop in it! It
+asks the user forever until they provide a filename that doesn't exist. Should a
+limit be placed on this? Should it only ask just once?
+
+=back
+
+If you answer yes to install your Fetchwarefile, then
+ask_to_install_now_to_test_fetchwarefile() will return the full path to the
+fetchware package that has been installed.
 
 =head2 start()
 
@@ -3887,23 +6367,6 @@ lookup.
 
 App::Fetchware is B<not> object-oriented; therefore, you B<can not> subclass
 App::Fetchware to extend it! 
-
-=head3 check_lookup_config()
-
-    check_lookup_config();
-
-Verifies the configurations parameters lookup() uses are correct. These are
-C<lookup_url> and C<lookup_method>. If they are wrong die() is called. If they
-are right it does nothing, but return.
-
-check_lookup_config() also currently checks if a program config option is given,
-and throws an exception if it is not.
-
-It also ensures that you specify at least one mirror, and how to verify your
-program. If this is not done properly, an exception is thrown. For verification
-to work properly, you must specify C<gpg_keys_url>, C<md5_url>, or C<sha1_url>.
-B<Only> if there is no verification availabe from your program's author should
-you use the C<verification_failure 'On';> option.
 
 =head3 get_directory_listing()
 
@@ -4648,6 +7111,212 @@ the program.
 
 =back
 
+=head2 upgrade()
+
+    my $upgrade = upgrade($download_path, $fetchware_package_path)
+
+    if ($upgrade) {
+        ...
+    }
+
+=over
+
+=item Configuration subroutines used:
+
+=over
+
+=item none
+
+=back
+
+=back
+
+Uses its two arguments ($download_path and $fetchware_package_path) to determine
+if the new version of your program that has been downloaded (from
+$download_path) is newer than the currently installed version (from
+$fetchware_package_path).
+
+Returns true if $download_path is newer than $fetchware_package_path.
+
+Returns false if $download_path is not newer than $fetchware_package_path.
+
+=over
+
+=item drop_privs() NOTES
+
+This section notes whatever problems you might come accross implementing and
+debugging your Fetchware extension due to fetchware's drop_privs mechanism.
+
+See L<Util's drop_privs() subroutine for more info|App::Fetchware::Util/drop_privs()>.
+
+=over
+
+=item *
+
+upgrade() is run in the B<child> process as nobody or C<user>, because the child
+needs to know if it should actually bother running the rest of fetchware's API
+subroutines.
+
+=back
+
+=back
+
+=head2 check_syntax()
+
+    'Syntax Ok' = check_syntax()
+
+=over
+
+=item Configuration subroutines used:
+
+=over
+
+=item none
+
+=back
+
+=back
+
+Calls check_config_options() to check for the following syntax errors in
+Fetchwarefiles. Note by the time check_syntax() has been called
+parse_fetchwarefile() has already parsed the Fetchwarefile, and any syntax
+errors in the user's Fetchwarefile will have already been reported by Perl.
+
+This may seem like a bug, but it's not. Do you really want to try to use regexes
+or something to try to parse the Fetchwarefile reliably, and then report errors
+to users? Or add PPI of all insane Perl modules as a dependency just to write
+syntax checking code that most of the time says the syntax is Ok anyway, and
+therefore a complete waste of time and effort? I don't want to deal with any of
+that insanity.
+
+Instead, check_syntax() uses config() to examine the already parsed
+Fetchwarefile for "higher level" syntax errors. Syntax errors that are
+B<Fetchware> syntax errors instead of just Perl syntax errors.
+
+For yours and my own convienience I created check_config_options() helper
+subroutine. Its data driven, and will check Fetchwarefile's for three different
+types of common syntax errors that occur in App::Fetchware's Fetchwarefile
+syntax. These errors are more at the level of I<logic errors> than actual syntax
+errors. See its POD below for additional details.
+
+Below briefly lists what App::Fetchware's implementation of check_syntax()
+checks.
+
+=over
+
+=item * Mandatory configuration options
+
+=over
+
+=item * program, lookup_url, and mirror are required for all Fetchwarefiles.
+
+=back
+
+=item * Conflicting configuration options
+
+=over
+
+=item * build_commands conflicts with any of prefix, configure_options, and
+make_options.
+
+=back
+
+=item * Ensures some options have only allowable options specified.
+
+=over
+
+=item * lookup_method can only have 'timestamp' or 'versionstring'. as options.
+
+=item * And verify_method can only have 'gpg', 'sha1', or 'md5' specified.
+
+=back
+
+=back
+
+=over
+
+=item drop_privs() NOTES
+
+This section notes whatever problems you might come accross implementing and
+debugging your Fetchware extension due to fetchware's drop_privs mechanism.
+
+See L<Util's drop_privs() subroutine for more info|App::Fetchware::Util/drop_privs()>.
+
+=over
+
+=item *
+
+check_syntax() is run in the parent process before even start() has run, so no
+temporary directory is available for use.
+
+=back
+
+=back
+
+=head2 check_syntax() API REFERENCE
+
+check_syntax() uses check_config_options() to do the heavy lifting of Set Theory
+to check that you do not use some configuration options that are not compatible
+with other ones that you have used.
+
+=head3 check_config_options()
+
+    check_config_options(
+        BothAreDefined => [ [qw(build_commands)],
+            [qw(prefix configure_options make_options)] ],
+        Mandatory => [ 'program', <<EOM ],
+    App-Fetchware: Your Fetchwarefile must specify a program configuration
+    option. Please add one, and try again.
+    EOM
+        Mandatory => [ 'mirror', <<EOM ],
+    App-Fetchware: Your Fetchwarefile must specify a mirror configuration
+    option. Please add one, and try again.
+    EOM
+        Mandatory => [ 'lookup_url', <<EOM ],
+    App-Fetchware: Your Fetchwarefile must specify a lookup_url configuration
+    option. Please add one, and try again.
+    EOM
+        ConfigOptionEnum => ['lookup_method', [qw(timestamp versionstring)] ],
+        ConfigOptionEnum => ['verify_method', [qw(gpg sha1 md5)] ],
+    );
+
+Uses config() to test that no configuration options that clash with each other
+are used.
+
+It's parameters are specified in a list with an even number of parameters. Each
+group of 2 parameters specifies a type of test that check_config_options() will
+test for. There are three types of tests. Also, note that the parameters are
+specified as a list not as a hash, because multiple "keys" are allowed, and hash
+keys must be unique; therefore, the parameters are a list instead of a hash.
+
+=over
+
+=item BothAreDefined
+
+Is used to test if one or more elements from both provided arrayrefs are defined
+at the same time. This is needed, because if you specify C<build_commands> any
+value you specify for C<prefix>, C<configure_options>, C<make_options> will be
+ignored, which may not be what you expect or want, so BothAreDefined is used to
+check for this.
+
+Also, unlike C<Mandatory> and C<ConfigOptionEnum> this syntax checker does not
+take a string argument that specifies an error message, because it takes the two
+other values that you specifiy, and uses them to fill in its own error message.
+
+=item Mandatory
+
+Is used to check for mandatory options, which just means that these options
+absolutely must be specified in user's Fetchwarefiles, and if they are not, then
+the provided error message is thrown as an exception.
+
+=item ConfigOptionEnum
+
+Tests that enumerations are valid. For example, C<lookup_method> can only take
+two values C<timestamp> or C<versionstring>, and ConfigOptionEnum is used to
+test for this.
+
+=back
+
 =head2 end()
 
     end();
@@ -4668,7 +7337,8 @@ end() is called after all of the other main fetchware subroutines such as
 lookup() are called. It's job is to cleanup after everything else. It just calls
 cleanup_tempdir(), which mostly just closes the C<fetchware.sem> fetchware
 semaphore file used to lock each fetchware temporary directory so C<fetchware
-clean> does not delete it.
+clean> does not delete it out from under an concurrently running Fetchware
+process.
 
 It also calls the very internal only __clear_CONFIG() subroutine that clears
 App::Fetchware's internal %CONFIG variable used to hold your parsed
@@ -4726,678 +7396,6 @@ fetchware's temporary directory out from under it.
 
 =back
 
-=head1 EXAMPLE FETCHWAREFILES
-
-Below are example Fetchwarefiles. They use a range of features to show you what
-Fetchware can do, and how it's Fetchwarefile can be manipulated to work with any
-source-code distribution.
-
-=head2 Apache Web Server
-
-This Apache Fetchwarefile includes a few extra mirrors just in case one is down.
-The fairly common C<-j 4> C<make_option> to make the build go faster, and a
-gigantic C<configure_options> telling C<./configure> excatly how I want my
-Apache built and configured. It also uses a heredoc to make its
-C<configure_options> configuration option much more legible.
-
-=over
-
-    use App::Fetchware;
-
-    program 'Apache';
-    lookup_url 'http://www.apache.org/dist/httpd/';
-    filter 'httpd-2.2';
-    mirror 'http://apache.mirrors.pair.com/httpd/';
-    mirror 'http://mirrors.ibiblio.org/apache/httpd/';
-    mirror 'ftp://apache.cs.utah.edu/apache.org/httpd/';
-
-    verify_method 'gpg';
-    gpg_keys_url 'http://www.apache.org/dist/httpd/KEYS';
-
-    make_options '-j 4';
-    prefix '/home/dly/software/apache2.2';
-    # You can use heredocs to make gigantic options like this one more legible.
-    configure_options <<EOO;
-    --with-mpm=prefork
-    --enable-modules="access alias auth autoindex cgi logio log_config status vhost_alias userdir rewrite ssl"
-    --enable-so
-    EOO
-
-=back
-
-=head2 NGINX Web Server
-
-nginx has its distribution set up differently than Apache, so some changes are
-needed. First, nginx does not seem to use any mirrors at all, which means
-nginx's Fetchwarefile is going to look kind of stupid with the same exact URL
-being used for both the C<lookup_url> and the C<mirror>, but such a
-configuration is supported. Next, nginx does not have a KEYS file, but it does
-list it's developer's keys on its Website. So, they have to be imported manually
-into your keyring, and then specify the C<user_keyring> option to switch
-fetchware from usings its own keyring to using your own keyring. Also, note the
-comment regarding having to use the C<user> option to specify a real user
-account. This is needed, because the verify step is done by fetchware's child
-after that child drops its root privileges. Th default user is nobody, and
-nobody has no real home, and therefore no keyring, so gpg won't be able to read
-the keys you ask it to by using the C<user_keyring> option; therefore, C<user>
-must be specified to change it to a real user, whoose keyring has had these keys
-imported into it. Also, worth noting that this nginx configuration does not use
-a C<filter> option. This is not actually needed, because the only source-code
-packages availabe at the C<lookup_url> are the nginx software packages
-themselves, but it might be a good idea to include one, because the nginx
-developers could always change how their download server is structured. So,
-including it is always a good idea.
-
-=over
-
-    use App::Fetchware;
-    
-    program 'nginx';
-    
-    # lookup_url and mirror are the same thing, because nginx does not seem to have
-    # mirrors. Fetchware, however, requires one, so the same URL is simply
-    # duplicated.
-    lookup_url 'http://nginx.org/download/';
-    mirror 'http://nginx.org/download/';
-    
-    
-    # Must add the developers public keys to my own keyring. These keys are
-    # availabe from http://nginx.org/en/pgp_keys.html Do this with:
-    # gpg \
-    # --fetch-keys http://nginx.org/keys/aalexeev.key\
-    # --fetch-keys http://nginx.org/keys/is.key\
-    # --fetch-keys http://nginx.org/keys/mdounin.key\
-    # --fetch-keys http://nginx.org/keys/maxim.key\
-    # --fetch-keys http://nginx.org/keys/sb.key\
-    # --fetch-keys http://nginx.org/keys/glebius.key\
-    # --fetch-keys http://nginx.org/keys/nginx_signing.key
-    # You might think you could just set gpg_keys_url to the nginx-signing.key key,
-    # but that won't work, because like apache different releases are signed by
-    # different people. Perhaps I could change gpg_keys_url to be like mirror where
-    # you can specify more than one option?
-    user_keyring 'On';
-    # user_keyring specifies to use the user's own keyring instead of fetchware's.
-    # But fetchware drops privileges by default using he user 'nobody.' nobody is
-    # nobody, so that user account does not have a home directory for gpg to read a
-    # keyring from. Therefore, I'm using my own account instead.
-    user 'dly';
-    # The other option, which is commented out below, is to use root's own keyring,
-    # and the no_install option to ensure that root uses its own keyring instead of
-    # nobody's.
-    # noinstall 'On';
-    verify_method 'gpg';
-
-=back
-
-=head2 PHP Programming Language
-
-PHP annoyingly uses a custom Web application on each of its mirror sites to
-serve HTTP downloads. No simple directory listing is available. Therefore, to
-use php with fetchware, custom C<lookup>, C<download>, and C<verify> hooks are
-needed that override fetchware's internal behavior to customize fetchware as
-needed so that it can work with how PHP's site is up.
-
-The C<lookup> hook downloads and parses the L<http://www.php.net/downloads.php>
-page, which lists files availabe for download. This file is parsed using
-L<HTML::TreeBuilder> to determine the latest version. The MD5 sum is also parsed
-out to verify the downloaded file as well.
-
-The C<download> hook is only needed, because http_download_file() presumes that
-the last part of the path is the filename you're downloading. And this is
-annoyingly not the case with the way PHP has its downloading system set up.
-
-The C<verify> hook just uses L<Digest::MD5> to calculate the md5sum of the
-downloaded file, and compares it with the one C<lookup> parses out.
-
-=over
-
-    use App::Fetchware qw(
-        :OVERRIDE_LOOKUP
-        :OVERRIDE_DOWNLOAD
-        :OVERRIDE_VERIFY
-        :DEFAULT
-    );
-    use App::Fetchware::Util ':UTIL';
-    use HTML::TreeBuilder;
-    use URI::Split qw(uri_split uri_join);
-    use Data::Dumper;
-    use HTTP::Tiny;
-    
-    program 'php';
-    
-    lookup_url 'http://us1.php.net/downloads.php';
-    mirror 'http://us1.php.net';
-    mirror 'http://us2.php.net';
-    mirror 'http://www.php.net';
-    
-    # php does *not* use a standard http or ftp mirrors for downloads. Instead, it
-    # uses its Web site, and some sort of application to download files using URLs
-    # such as: http://us1.php.net/get/php-5.5.3.tar.bz2/from/this/mirror
-    #
-    # Bizarrely a URL like
-    # http://us1.php.net/get/php-5.5.3.tar.bz2/from/us2.php.net/mirror
-    # gets you the same page, but on a different mirror. Weirdly, these are direct
-    # downloads without any HTTP redirects using 300 codes, but direct downloads.
-    # 
-    # This is why using fetchware with php you needs a custom lookup handler.
-    # The files you download are resolved to a [http://us1.php.net/distributions/...]
-    # directory, but trying to access a apache styple auto index at that url fails
-    # with a rediret back to downloads.php.
-    my $md5sum;
-    hook lookup => sub {
-        die <<EOD unless config('lookup_url') =~ m!^http://!;
-    php.Fetchwarefile: Only http:// lookup_url's and mirrors are supported. Please
-    only specify a http lookup_url or mirror.
-    EOD
-    
-        msg "Downloading lookup_url [@{[config('lookup_url')]}].";
-        my $dir_list = download_dirlist(config('lookup_url'));
-    
-        vmsg "Parsing HTML page listing php releases.";
-        my $tree = HTML::TreeBuilder->new_from_content($dir_list);
-    
-        # This parsing code assumes that the latest version of php is the first one
-        # we find, which seems like a dependency that's unlikely to change.
-        my $download_path;
-        $tree->look_down(
-            _tag => 'a',
-            sub {
-                my $h = shift;
-                
-                my $link = $h->as_text();
-    
-                # Is the link a php download link or something to ignore.
-                if ($link =~ /tar\.(gz|bz2|xz)|(tgz|tbz2|txz)/) {
-    
-                    # Set $download_path to this tags href, which should be
-                    # something like: /get/php-5.5.3.tar.bz2/from/a/mirror
-                    if (exists $h->{href} and defined $h->{href}) {
-                        $download_path = $h->{href};
-                    } else {
-                        die <<EOD;
-    php.Fetchwarefile: A path should be found in this link [$link], but there is no
-    path it in. No href [$h->{href}].
-    EOD
-                    }
-    
-                    # Find and save the $md5sum for the verify hook below.
-                    # It should be 3 elements over, so it should be the third index
-                    # in the @right array below (remember to start counting 2 0.).
-                    my @right = $h->right();
-                    my $md5_span_tag = $right[2];
-                    $md5sum = $md5_span_tag->as_text();
-                    $md5sum =~ s/md5:\s+//; # Ditch md5 header.
-                }
-            }
-        );
-    
-        # Delete the $tree, so perl can garbage collect it.
-        $tree = $tree->delete;
-    
-        # Determine and return a proper $download_path.
-        # Switch it from [/from/a/mirror] to [/from/this/mirror], so the mirror will
-        # actually return the file to download.
-        $download_path =~ s!/a/!/this/!;
-    
-        vmsg "Determined download path to be [$download_path]";
-        return $download_path;
-    };
-    
-    
-    # I also must hook download(), because fetchware presumes that the filename of
-    # the downloaded file is the last part of the $path, but that is not the case
-    # with the path php uses for file downloads, because it ends in mirror, which is
-    # *not* the name of the file; therefore, I must  hook download() to fix this
-    # problem.
-    hook download => sub {
-        my ($temp_dir, $download_path) = @_;
-    
-        my $http = HTTP::Tiny->new();
-        my $response;
-        for my $mirror (config('mirror')) {
-            my ($scheme, $auth, $path, $query, $fragment) = uri_split($mirror);
-            my $url = uri_join($scheme, $auth, $download_path, undef, undef);
-            msg <<EOM;
-    Downloading path [$download_path] using mirror [$mirror].
-    EOM
-            $response = $http->get($url);
-            
-            # Only download it once.
-            last if $response->{success};
-        }
-    
-        die <<EOD unless $response->{success};
-    php.Fetchwarefile: Failed to download the download path [$download_path] using
-    the mirrors [@{[config('mirror')]}]. The response was:
-    [@{[Dumper($response->{headers})]}].
-    EOD
-        die <<EOD unless length $response->{content};
-    php.Fetchwarefile: Didn't actually download anything. The length of what was
-    downloaded is zero. status [$response->{status}] reason [$response->{reason}]
-    HTTP headers [@{[Dumper($response->{headers})]}].
-    EOD
-    
-        msg 'File downloaded successfully.';
-    
-        # Determine $filename from $download_path
-        my @paths = split('/', $download_path);
-        my ($filename) = grep /php/, @paths;
-    
-        vmsg "Filename determined to be [$filename]";
-    
-        open(my $fh, '>', $filename) or die <<EOD;
-    php.Fetchwarefile: Failed to open [$filename] for writing. OS error [$!].
-    EOD
-    
-        print $fh $response->{content};
-        close $fh or die <<EOD;
-    php.Fetchwarefile: Huh close($filename) failed! OS error [$!].
-    EOD
-    
-        my $package_path = determine_package_path($temp_dir, $filename);
-    
-        vmsg "Package path determined to be [$package_path].";
-    
-        return $package_path
-    };
-    
-    
-    # The above lookup hook parses out the md5sum on the php downloads.php web
-    # site, and stores it in $md5sum, which is used in the the verify hook below.
-    hook verify => sub {
-        # Don't need the $download_path, because lookup above did that work for us.
-        # $package_path is the actual php file that we need to ensure its md5
-        # matches the one lookup determined.
-        my ($download_path, $package_path) = @_;
-    
-        msg "Verifying [$package_path] using md5.";
-    
-        dir <<EOD if not defined $md5sum;
-    php.Fetchwarefile: lookup failed to figure out the md5sum for verify to use to
-    verify that the php version [$package_path] matches the proper md5sum.
-    The md5sum was [$md5sum].
-    EOD
-    
-        my $package_fh = safe_open($package_path, <<EOD);
-    php.Fetchwarefile: Can not open the php package [$package_path]. The OS error
-    was [$!].
-    EOD
-    
-        # Calculate the downloaded php file's md5sum.
-        my $digest = Digest::MD5->new();
-        $digest->addfile($package_fh);
-        my $calculated_digest = $digest->hexdigest();
-    
-        die <<EOD unless $md5sum eq $calculated_digest;
-    php.Fetchwarefile: MD5sum comparison failed. The calculated md5sum
-    [$calculated_digest] does not match the one parsed of php.net's Web site
-    [$md5sum]! Do not trust this downloaded file! Perhaps there's a bug somewhere,
-    or perhaps the php mirror you downloaded this php package from has been hacked.
-    Mirrors do get hacked occasionally, so it is very much possible.
-    EOD
-    
-        msg "ms5sums [$md5sum] [$calculated_digest] match.";
-    
-        return 'Package Verified';
-    };
-
-=back
-
-=head2 PHP Programming Language using its git VCS instead of download mirrors.
-
-PHP like most open source software you can easily download off the internet uses
-a version control system to track changes to its source code. This source code
-repository is basically the same thing as a normal source code distribution
-would be except VCS commands like C<git pull> are used to update it instead of
-checking a mirror for a new version. The Fetchwarefile below for php customizes
-Fetchware to work with php's VCS instead of the traditional downloading of
-actual source code archives.
-
-It overrides lookup() to use a local git repo stored in the $git_repo_dir
-variable. To create a repo just clone php's git repo (see
-http://us1.php.net/git.php for details.). It runs git pull to update the repo,
-and then it runs git tags, and ditches some older junk tags, and finds only the
-tags used for new versions of php. These are sorted using the C<versonstring>
-lookup() algorithm, and the latest one is returned.
-
-download() uses C<git checkout [latesttag]> to "download" php by simply changing
-the working directory to the latest tag. verify() uses git's cool C<verify-tag>
-command to verify the gpg signature. unarchive() is updated to do nothing since
-there is no archive to unarchive. However, because we reuse build(), archive()
-must return a $build_path that build() will change its directory to. start() and
-end() are also overridden, because managing a temporary directory is not needed,
-so, instead, they just do a C<git checkout master> to switch from whatever the
-latest tag is back to master, because git pull bases what it does on what branch
-you're in, so we must actually be a real branch to update git.
-
-=over
-
-    # php-using-git.Fetchwarefile: example fetchwarefile using php's git repo
-    # for lookup(), download(), and verify() functionality.
-    use App::Fetchware qw(:DEFAULT :OVERRIDE_LOOKUP);
-    use App::Fetchware::Util ':UTIL';
-    use Cwd 'cwd';
-    
-    # The directory where the php source code's local git repo is.
-    my $git_repo_dir = '/home/dly/Desktop/Code/php-src';
-    
-    # By default Fetchware drops privs, and since the source code repo is stored in
-    # the user dly's home directory, I should drop privs to dly, so that I have
-    # permission to access it.
-    user 'dly';
-    
-    # Determine latest version by using the tags developers create to determine the
-    # latest version.
-    hook lookup => sub {
-        # chdir to git repo.
-        chdir $git_repo_dir or die <<EOD;
-    php.Fetchwarefile: Failed to chdir to git repo at
-    [$git_repo_dir].
-    OS error [$!].
-    EOD
-    
-        # Pull latest changes from php git repo.
-        run_prog('git pull');
-    
-        # First determine latest version that is *not* a development version.
-        # And chomp off their newlines.
-        chomp(my @tags = `git tag`);
-    
-        # Now sort @tags for only ones that begin with 'php-'.
-        @tags = grep /^php-/, @tags;
-    
-        # Ditch release canidates (RC, alphas and betas.
-        @tags = grep { $_ !~ /(RC\d+|beta\d+|alpha\d+)$/ } @tags;
-    
-        # Sort the tags to find the latest one.
-        # This is quite brittle, but it works nicely.
-        @tags = sort { $b cmp $a } @tags;
-    
-        # Return $download_path, which is only just the latest tag, because that's
-        # all I need to know to download it using git by checking out the tag.
-        my $download_path = $tags[0];
-    
-        return $download_path;
-    };
-    
-    
-    # Just checkout the latest tag to "download" it.
-    hook download => sub {
-        my ($temp_dir, $download_path) = @_;
-    
-        # The latest tag is the download path see lookup.
-        my $latest_tag = $download_path;
-    
-        # checkout the $latest_tag to download it.
-        run_prog('git checkout', "$latest_tag");
-    
-        my $package_path = cwd();
-        return $package_path;
-    };
-    
-    
-    # You must manually add php's developer's gpg keys to your gpg keyring. Do
-    # this by  going to the page: http://us1.php.net/downloads.php . At the
-    # bottom the gpg key "names are listed such as "7267B52D" or "5DA04B5D."
-    # These are their key "names." Use gpg to download them and import them into
-    # your keyring using: gpg --keyserver pgp.mit.edu --recv-keys [key id]
-    hook verify => sub {
-        my ($download_path, $package_path) = @_;
-    
-        # the latest tag is the download path see lookup.
-        my $latest_tag = $download_path;
-    
-        # Run git verify-tag to verify the latest tag
-        my $success = eval { run_prog('git verify-tag', "$latest_tag"); 1;};
-    
-        # If the git verify-tag fails, *and* verify_failure_ok has been turned on,
-        # then ignore the thrown exception, but print an annoying message.
-        unless (defined $success and $success) {
-            unless (config('verify_failure_ok')) {
-                msg <<EOM;
-    Verification failure ok, becuase you've configured fetchware to continue even
-    if it cannot verify its downloads. Please reconsider, because mirror and source
-    code repos do get hacked. The exception that was caught was:
-    [$@]
-    EOM
-            }
-        }
-    };
-    
-    
-    hook unarchive => sub {
-        # there is nothing to archive due to use of git.
-        do_nothing(); # But return the $build_path, which is the cwd().
-        my $build_path = $git_repo_dir;
-        return $build_path;
-    };
-    
-    # It's a git tag, so it lacks an already generated ./configure, so I must use
-    # ./buildconf to generate one. But it won't work on php releases, so I have to
-    # force it with --force to convince ./buildconf to run autoconf to generate the
-    # ./configure program to configure php for building.
-    build_commands './buildconf --force', './configure', 'make';
-
-    # Add any custom configure options that you may want to add to customize
-    # your build of php, or control what php extensions get built.
-    #configure_options '--whatever you --need ok';
-    
-    # start() creates a tempdir in most cases this is exactly what you want, but
-    # because this Fetchwarefile is using git instead. I don't need to bother with
-    # creating a temporary directory.
-    hook start => sub {
-        # But checkout master anyway that way the repo can be in a known good state
-        # so lookup()'s git pull can succeed.
-        run_prog('git checkout master');
-    };
-    
-    
-    # Switch the local php repo back to the master branch to make using it less
-    # crazy. Furthermore, when using git pull to update the repo git uses what
-    # branch your on, and if I've checked out a tag, I'm not actually on a branch
-    # anymore; therefore, I must switch back to master, so that the git pull when
-    # this fetchwarefile is run again will still work.
-    hook end => sub {
-        run_prog('git checkout master');
-    };
-
-=back
-
-=head2 MariaDB Database
-
-This example MariaDB Fetchwarefile parses the MariaDB download page to determine
-what the latest version is based on what C<filter> option you set up. Once this
-is determined, the download path is created based on the weird path that MariaDB
-uses on its mirrors.
-
-Like PHP MariaDB uses some annoying software on their Web site to presumably
-track downloads. This software makes use of AJAX, which is vastly beyone the
-capabilities of HTML::TreeBuilder to parse, because it needs a working
-JavaScript environment. Therefore, the example Fetchwarefile below has no way of
-verifying the MySQL downloads. This could be fixed by using a Perl Web scraping
-module that can deal with JavaScript.
-
-=over
-
-    use App::Fetchware;
-    
-    program 'MariaDB';
-    
-    # MariaDB uses ccache, which wants to create a ~/.ccache cache, which it can't
-    # do when it's running as nobody, so use a real user account to ensure ccache
-    # has a cache directory it can write to.
-    user 'dly';
-    
-    lookup_url 'https://downloads.mariadb.org/';
-    
-    # Below are the two USA mirrors where I live. Customize them as you need based
-    # on the mirrors listed on the download page (https://downloads.mariadb.org/ and
-    # then click on which version you want, and then click on the various mirrors
-    # by country. All you need is the scheme (ftp:// or http:// part) and the
-    # hostname without a slash (ftp.osuosl.org or mirror.jmu.edu). Not the full path
-    # for each mirror.
-    mirror 'http://ftp.osuosl.org';
-    mirror 'http://mirror.jmu.edu';
-    
-    # The filter option is key to the custom lookup hook working correctly. It must
-    # represent the text that corresponds to the latest GA release of MariaDB
-    # available. It should be 'Download 5.5' for 5.5 or 'Download 10.0' for the
-    # newver but not GA 10.0 version of MariaDB.
-    filter 'Download 5.5';
-    
-    hook lookup => sub {
-        vmsg "Downloading HTML download page listing MariaDB releases.";
-        my $dir_list = http_download_dirlist(config('lookup_url'));
-    
-        vmsg "Parsing HTML page listing MariaDB releases.";
-        my $tree = HTML::TreeBuilder->new_from_content($dir_list);
-    
-        # This parsing code assumes that the latest version of php is the first one
-        # we find, which seems like a dependency that's unlikely to change.
-        my @version_number;
-        $tree->look_down(
-            _tag => 'a',
-            sub {
-                my $h = shift;
-                
-                my $link = $h->as_text();
-    
-                # Find the filter which should be "Download\s[LATESTVERSION]"
-                my $filter = config('filter');
-                if ($link =~ /$filter/) {
-                    # Parse out the version number.
-                    # It's just the second space separated field.
-                    push @version_number, (split ' ', $link)[1];
-                }
-            }
-        );
-    
-        # Delete the $tree, so perl can garbage collect it.
-        $tree = $tree->delete;
-    
-        # Only one version should be found.
-        die <<EOD if @version_number > 1;
-    mariaDB.Fetchwarefile: multiple version numbers detected. You should probably
-    refine your filter option and try again. Filter [@{[config('filter')]}].
-    Versions found [@version_number].
-    EOD
-    
-        # Construct a download path using $version_number[0].
-        my $filename = 'mariadb-' . $version_number[0] . '.tar.gz';
-    
-        # Return a proper $download_path, so That I do not have to hook download(),
-        # but can reuse Fetchware's download() subroutine.
-        my $weird_prefix = '/mariadb-' . $version_number[0] . '/kvm-tarbake-jaunty-x86/';
-        my $download_path = '/pub/mariadb' . $weird_prefix .$filename;
-        return $download_path;
-    };
-    
-    # Make verify() failing to verify MariaDB ok, because parsing out the MD5 sum
-    # would require a Web scraper that supports javascript, which HTML::TreeBuilder
-    # obviously does not.
-    verify_failure_ok 'On';
-    
-    # Use build_commands to configure fetchware to use MariaDB's BUILD script to
-    # build it. See https://mariadb.com/kb/en/generic-build-instructions/ for
-    # instructions on the different BUILD  cmake scripts that are available.
-    build_commands 'BUILD/compile-pentium64-max';
-    
-    # Use install_commands to tell fetchware how to install it. I could leave this
-    # out, but it nicely documents what command is needed to install MariaDB
-    # properly.
-    install_commands 'make install';
-
-=back
-
-=head2 PostgreSQL Database
-
-Below is a example Fetchwarefile that overrides lookup() to determine the latest
-version, but manages to avoid overriding anything else. It uses the same style
-as the rest downloading an HTML page that lists the version numbers on it
-somewhere. Then it parses the HTML with HTML::TreeBuilder. It populates an
-array, and then uses L<App::Fetchware>'s lookup_by_versionstring() to determine
-which version is the latest one. This is then concatenated with a bunch of other
-stuff to determine the $download_path.
-
-MD5 verification is supported by simply specifying a C<md5_url> option, because
-by default fetchware uses the C<lookup_url> to determine where to download the
-md5sum from, but that won't work with PostgreSQL, because it's download system
-has the md5sum on the download C<mirror> instead of the C<lookup_url>.
-
-=over
-
-    use App::Fetchware qw(:DEFAULT :OVERRIDE_LOOKUP);
-    use App::Fetchware::Util ':UTIL';
-    
-    use HTML::TreeBuilder;
-    
-    program 'postgres';
-    
-    # The Postgres file browser URL lists the available versions of Postgres.
-    lookup_url 'http://www.postgresql.org/ftp/source/';
-    
-    # Mirror URL where the file browser links to download them from.
-    my $mirror = 'http://ftp.postgresql.org';
-    mirror $mirror;
-    
-    # The Postgres file browser URL that is used for the lookup_url lists version
-    # numbers of Postgres like v9.3.0. this lookup hook parses out the list of
-    # theses numbers, determines the latest one, and constructs a $download_path to
-    # return for download to use to download based on what I set my mirror to.
-    hook lookup => sub {
-        my $dir_list = no_mirror_download_dirlist(config('lookup_url'));
-    
-        my $tree = HTML::TreeBuilder->new_from_content($dir_list);
-    
-        # Parse out version number directories.
-        my @ver_nums;
-        my @list_context = $tree->look_down(
-            _tag => 'a',
-            sub {
-                my $h = shift;
-    
-                my $link = $h->as_text();
-    
-                # Is this link a version number or something to ignore?
-                if ($link =~ /^v\d+\.\d+(.\d+)?$/) {
-                    # skip version numbers that are beta's, alpha's or release
-                    # candidates (rc).
-                    return if $link =~ /beta|alpha|rc/i;
-                    # Strip useless "v" that just gets in the way later when I
-                    # create the $download_path.
-                    $link =~ s/^v//;
-                    push @ver_nums, $link;
-                }
-            }
-        );
-    
-        # Turn @ver_num into the array of arrays that lookup_by_versionstring()
-        # needs its arguments to be in.
-        my $directory_listing = do {
-            my $arrayref_of_arrays_directory_listing = [];
-            for my $ver_num (@ver_nums) {
-                push @$arrayref_of_arrays_directory_listing,
-                    [$ver_num];
-            }
-            $arrayref_of_arrays_directory_listing;
-        };
-        # Find latest version.
-        my $latest_ver = lookup_by_versionstring($directory_listing);
-    
-        # Return $download_path.
-        my $download_path = '/pub/source/'. "v$latest_ver->[0][0]" .
-            "/postgresql-$latest_ver->[0][0].tar.bz2";
-        return $download_path;
-    };
-    
-    # MD5sums are stored on the download site, so use them to verify the package.
-    verify_method 'md5';
-    # But they are *not* stored on the original "lookup_url" site, so I must provide
-    # a md5_url pointing to the download site.
-    md5_url $mirror;
-
-=back
-
 =head1 FAQ
 
 =head2 Why doesn't fetchware and App::Fetchware use OO or Moose?
@@ -5440,7 +7438,7 @@ wanted it to be easy to use. dzil is for Perl programmers, so it requiring some
 knowledge of Perl and Moose is ok. But fetchware is for end users or perhaps
 system administrators not Perl programmers, so something easier is needed.
 
-The extension mechanism was design for ease of use by people who use your
+The extension mechanism was designed for ease of use by people who use your
 fetchware extension. And it is. Just "use" whatever fetchware extension you want
 in your Fetchwarefile, and then supply whatever configuration options you
 need.
@@ -5565,8 +7563,6 @@ instead of the vague one liner that perl's own errors give.
 
 The official bug tracker for fetchware is its 
 L<github issues page.|https://github.com/deeelwy/Fetchware/issues>
-
-=head1 RESTRICTIONS 
 
 =head1 AUTHOR
 

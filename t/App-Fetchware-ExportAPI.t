@@ -30,9 +30,9 @@ subtest 'Test _export_api() exceptions.' => sub {
     eval_ok(sub {App::Fetchware::ExportAPI::_export_api($caller, KEEP => [],
                 OVERRIDE => []);},
         <<EOE, 'checked _export_api() not all API subs specified.');
-App-Fetchware-Util: export_api() must be called with either or both of the KEEP
-and OVERRIDE options, and you must supply the names of all of fetchware's API
-subroutines to either one of these 2 options.
+App-Fetchware-ExportAPI: _export_api() or import() must be called with either or
+both of the KEEP and OVERRIDE options, and you must supply the names of all of
+fetchware's API subroutines to either one of these 2 options.
 EOE
 
     package main;
@@ -49,7 +49,7 @@ subtest 'Test _export_api() success.' => sub {
     my $caller = 'TestPackage';
     
     my @api_subs
-        = qw(start lookup download verify unarchive build install uninstall end);
+        = qw(check_syntax new new_install start lookup download verify unarchive build install end uninstall upgrade);
     App::Fetchware::ExportAPI::_export_api($caller, KEEP => \@api_subs);
 
     package main;
@@ -63,6 +63,9 @@ subtest 'Test _export_api() success.' => sub {
 
     package TestPackage2;
     use App::Fetchware::Util ':UTIL';
+    sub check_syntax { return 'nothing'; }
+    sub new { return 'nothing'; }
+    sub new_install { return 'nothing'; }
     sub start { return 'nothing'; }
     sub lookup { return 'nothing'; }
     sub download { return 'nothing'; }
@@ -70,8 +73,9 @@ subtest 'Test _export_api() success.' => sub {
     sub unarchive { return 'nothing'; }
     sub build { return 'nothing'; }
     sub install { return 'nothing'; }
-    sub uninstall { return 'nothing'; }
     sub end {return 'nothing'; }
+    sub uninstall { return 'nothing'; }
+    sub upgrade { return 'nothing'; }
 
     $caller = 'TestPackage2';
 
@@ -98,7 +102,7 @@ subtest 'Test import() success.' => sub {
     # subs into Test::Package's namespace.
     use App::Fetchware ();
     my @api_subs
-        = qw(start lookup download verify unarchive build install uninstall end);
+        = qw(check_syntax new new_install start lookup download verify unarchive build install end uninstall upgrade);
     App::Fetchware::ExportAPI->import(KEEP => \@api_subs);
 
     package main;
@@ -113,6 +117,9 @@ subtest 'Test import() success.' => sub {
 
     package TestPackage4;
     use App::Fetchware::Util ':UTIL';
+    sub check_syntax { return 'nothing'; }
+    sub new { return 'nothing'; }
+    sub new_install { return 'nothing'; }
     sub start { return 'nothing'; }
     sub lookup { return 'nothing'; }
     sub download { return 'nothing'; }
@@ -120,8 +127,9 @@ subtest 'Test import() success.' => sub {
     sub unarchive { return 'nothing'; }
     sub build { return 'nothing'; }
     sub install { return 'nothing'; }
+    sub end {return 'nothing'; }
     sub uninstall { return 'nothing'; }
-    sub end { return 'nothing'; }
+    sub upgrade { return 'nothing'; }
     App::Fetchware::ExportAPI->import(OVERRIDE => \@api_subs);
 
     package main;
@@ -144,10 +152,10 @@ subtest 'Test use App::Fetchware::ExportAPI.' => sub {
     use App::Fetchware ();
 
     my @api_subs
-        = qw(start lookup download verify unarchive build install uninstall end);
+        = qw(check_syntax new new_install start lookup download verify unarchive build install end uninstall upgrade);
 
     use App::Fetchware::ExportAPI
-        KEEP => [qw(start lookup download verify unarchive build install uninstall end)];
+        KEEP => [qw(check_syntax new new_install start lookup download verify unarchive build install end uninstall upgrade)];
 # For debugging--you can't debug begin blocks and use's.
 #    require App::Fetchware::ExportAPI;
 #    App::Fetchware::ExportAPI->import(KEEP => \@api_subs);
@@ -164,6 +172,9 @@ subtest 'Test use App::Fetchware::ExportAPI.' => sub {
 
     package TestPackage6;
     use App::Fetchware::Util ':UTIL';
+    sub check_syntax { return 'nothing'; }
+    sub new { return 'nothing'; }
+    sub new_install { return 'nothing'; }
     sub start { return 'nothing'; }
     sub lookup { return 'nothing'; }
     sub download { return 'nothing'; }
@@ -171,10 +182,12 @@ subtest 'Test use App::Fetchware::ExportAPI.' => sub {
     sub unarchive { return 'nothing'; }
     sub build { return 'nothing'; }
     sub install { return 'nothing'; }
+    sub end {return 'nothing'; }
     sub uninstall { return 'nothing'; }
-    sub end { return 'nothing'; }
+    sub upgrade { return 'nothing'; }
     use App::Fetchware::ExportAPI
-        OVERRIDE => [qw(start lookup download verify unarchive build install uninstall end)];
+
+        OVERRIDE => [qw(check_syntax new new_install start lookup download verify unarchive build install end uninstall upgrade)];
 # For debugging--you can't debug begin blocks and use's.
 #    require App::Fetchware::ExportAPI;
 #    App::Fetchware::ExportAPI->import(OVERRIDE => \@api_subs);
