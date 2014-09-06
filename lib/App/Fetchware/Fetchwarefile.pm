@@ -1,5 +1,5 @@
 package App::Fetchware::Fetchwarefile;
-$App::Fetchware::Fetchwarefile::VERSION = '1.011';
+$App::Fetchware::Fetchwarefile::VERSION = '1.012';
 # ABSTRACT: Helps Fetchware extensions create Fetchwarefiles.
 ###BUGALERT### Uses die instead of croak. croak is the preferred way of throwing
 #exceptions in modules. croak says that the caller was the one who caused the
@@ -328,7 +328,7 @@ App::Fetchware::Fetchwarefile - Helps Fetchware extensions create Fetchwarefiles
 
 =head1 VERSION
 
-version 1.011
+version 1.012
 
 =head1 SYNOPSIS
 

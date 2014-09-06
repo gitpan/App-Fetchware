@@ -1,5 +1,5 @@
 package App::Fetchware::Util;
-$App::Fetchware::Util::VERSION = '1.011';
+$App::Fetchware::Util::VERSION = '1.012';
 # ABSTRACT: Miscelaneous functions for App::Fetchware.
 ###BUGALERT### Uses die instead of croak. croak is the preferred way of throwing
 #exceptions in modules. croak says that the caller was the one who caused the
@@ -1530,7 +1530,7 @@ App::Fetchware::Util - Miscelaneous functions for App::Fetchware.
 
 =head1 VERSION
 
-version 1.011
+version 1.012
 
 =head1 SYNOPSIS
 
