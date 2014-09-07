@@ -1,5 +1,5 @@
 package App::Fetchware;
-$App::Fetchware::VERSION = '1.012';
+$App::Fetchware::VERSION = '1.013';
 # ABSTRACT: App::Fetchware is Fetchware's API used to make extensions.
 ###BUGALERT### Uses die instead of croak. croak is the preferred way of throwing
 #exceptions in modules. croak says that the caller was the one who caused the
@@ -3318,7 +3318,7 @@ App::Fetchware - App::Fetchware is Fetchware's API used to make extensions.
 
 =head1 VERSION
 
-version 1.012
+version 1.013
 
 =head1 SYNOPSIS
 

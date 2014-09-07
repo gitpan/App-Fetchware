@@ -7,13 +7,14 @@ use 5.010001;
 
 
 # Test::More version 0.98 is needed for proper subtest support.
-use Test::More 0.98 tests => '11'; #Update if this changes.
+use Test::More 0.98 tests => '13'; #Update if this changes.
 
 use App::Fetchware::Config ':CONFIG';
 use Test::Fetchware ':TESTING';
 use File::Spec::Functions 'catfile';
 use File::Temp 'tempdir';
 use Cwd 'cwd';
+use Config;
 
 
 # Set PATH to a known good value.
@@ -83,6 +84,20 @@ subtest 'test command line uninstall' => sub {
 ##BROKEN##subtest 'test command line new' => sub {
 ##BROKEN##
 ##BROKEN##};
+
+
+# Set FETCHWARE_DATABASE_PATH to a tempdir, so that this test uses a different
+# path for your fetchware database than the one fetchware normally uses after it
+# is installed. This is to avoid any conflicts with already installed fetchware
+# packages, because if the actual fetchware database path is used for this test,
+# then this test will actually upgrade any installed fetchware packages. Early
+# in testing I found this acceptable, but now it's a massive bug. I've already
+# implemented the FETCHWARE_DATABASE_PATH evironment variable, so I may as well
+# take advantage of it.
+$ENV{FETCHWARE_DATABASE_PATH} = tempdir("fetchware-test-$$-XXXXXXXXXX",
+    CLEANUP => 1, TMPDIR => 1); 
+ok(-e $ENV{FETCHWARE_DATABASE_PATH},
+    'Checked creating upgrade test FETCHWARE_DATABASE_PATH success.');
 
 
 subtest 'test command line upgrade' => sub {
@@ -197,6 +212,8 @@ note("]");
 # annoying.
 $ENV{FETCHWARE_DATABASE_PATH} = tempdir("fetchware-test-$$-XXXXXXXXXX",
     CLEANUP => 1, TMPDIR => 1); 
+ok(-e $ENV{FETCHWARE_DATABASE_PATH},
+    'Checked creating upgrade-all test FETCHWARE_DATABASE_PATH success.');
 
 
 subtest 'test command line upgrade-all' => sub {
@@ -359,7 +376,7 @@ subtest 'test command line default' => sub {
     ###BUGALERT### Only tests if bin/fetchware's exit value is 0, because
     #print_ok() cannot test a forked and execed processes' STDOUT only the
     #current processes STDOUT.
-    ok(run_perl($^X, 'bin/fetchware'),
+    ok(run_perl($Config{perlpath}, 'bin/fetchware'),
         'Checked command line @ARGV = help.');
 
 
@@ -419,12 +436,12 @@ subtest 'test command line command line options' => sub {
 # so is more robust than using this, but this is better than no_plan.
 #done_testing();
 
-# Like run_prog() but never prints anything extra, and includes the $^X and
+# Like run_prog() but never prints anything extra, and includes the $Config{perlpath} and
 # 'bin/fetchware' stuff all of these tests need. And it returns 
 sub run_perl {
-    my $retval = system($^X, 'bin/fetchware', @_);
+    my $retval = system($Config{perlpath}, 'bin/fetchware', @_);
     $retval == 0 or die <<EOD;
-system(\$^X, 'bin/fetchware', @_) failed. OS error [$!].
+system(\$Config{perlpath}, 'bin/fetchware', @_) failed. OS error [$!].
 EOD
     # system() returns 0 for success, but 0 is false in perl, so I have to turn
     # it into a normal true or false value for use with ok() or print_ok().

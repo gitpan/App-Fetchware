@@ -21,6 +21,7 @@ use Perl::OSType 'is_os_type';
 use Fcntl ':flock';
 use URI::Split qw(uri_split uri_join);
 use App::Fetchware 'http_parse_filelist';
+use Config;
 
 # Set PATH to a known good value.
 $ENV{PATH} = '/usr/local/bin:/usr/bin:/bin';
@@ -134,11 +135,8 @@ subtest 'test file_download_dirlist()' => sub {
 
     # Test file_download_dirlist()'s Exceptions.
     eval_ok(sub {file_download_dirlist('/akdjf983hfo3e4gghj-doesnotexist')},
-        <<EOE, 'checked file_download_dirlist() does not exist exception.');
-App-Fetchware-Util: The directory that fetchware is trying to use to determine
-if a new version of the software is available does not exist. This directory is
-[/akdjf983hfo3e4gghj-doesnotexist], and the OS error is [No such file or directory].
-EOE
+        qr/App-Fetchware-Util: The directory that fetchware is trying to use to determine/,
+        'checked file_download_dirlist() does not exist exception.');
     my $temp_dir = tempdir("fetchware-test-$$-XXXXXXXXX",
         CLEANUP => 1, TMPDIR => 1);
     eval_ok(sub {file_download_dirlist($temp_dir)},
@@ -734,13 +732,13 @@ subtest 'test run_prog()' => sub {
     # as system()'s return value.). And then it is tested if it ran successfully
     # in which case it would be 0, which means it ran successfully. See perldoc
     # system for more.
-    ok(run_prog("$^X", '-e print "Testing 1...2...3!!!\n"') >> 8 == 0,
+    ok(run_prog("$Config{perlpath}", '-e print "Testing 1...2...3!!!\n"') >> 8 == 0,
         'test run_prog() success');
 
     # Set bin/fetchware's $quiet to true.
     $fetchware::quiet = 1;
 
-    ok(run_prog("$^X", '-e print "Testing 1...2...3!!!\n"') >> 8 == 0,
+    ok(run_prog("$Config{perlpath}", '-e print "Testing 1...2...3!!!\n"') >> 8 == 0,
         'test run_prog() success');
 
     # Set bin/fetchware's $quiet to false.
