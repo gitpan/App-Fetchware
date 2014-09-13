@@ -26,7 +26,7 @@ my %WriteMakefileArgs = (
     "Archive::Zip" => 0,
     "Digest::MD5" => 0,
     "Digest::SHA" => 0,
-    "File::HomeDir" => 0,
+    "File::HomeDir" => "0.93",
     "Getopt::Long" => 0,
     "HTML::TreeBuilder" => 0,
     "HTTP::Tiny" => 0,
@@ -42,7 +42,7 @@ my %WriteMakefileArgs = (
   "TEST_REQUIRES" => {
     "Test::Deep" => 0
   },
-  "VERSION" => "1.013",
+  "VERSION" => "1.014",
   "test" => {
     "TESTS" => "t/*.t"
   }
@@ -54,7 +54,7 @@ my %FallbackPrereqs = (
   "Archive::Zip" => 0,
   "Digest::MD5" => 0,
   "Digest::SHA" => 0,
-  "File::HomeDir" => 0,
+  "File::HomeDir" => "0.93",
   "Getopt::Long" => 0,
   "HTML::TreeBuilder" => 0,
   "HTTP::Tiny" => 0,

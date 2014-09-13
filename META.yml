@@ -18,7 +18,7 @@ requires:
   Archive::Zip: '0'
   Digest::MD5: '0'
   Digest::SHA: '0'
-  File::HomeDir: '0'
+  File::HomeDir: '0.93'
   Getopt::Long: '0'
   HTML::TreeBuilder: '0'
   HTTP::Tiny: '0'
@@ -34,4 +34,4 @@ requires:
 resources:
   bugtracker: https://github.com/deeelwy/Fetchware/issues
   repository: https://github.com/deeelwy/Fetchware.git
-version: '1.013'
+version: '1.014'

@@ -5,7 +5,7 @@
 # bypasses a limitation in dzil regarding creating the POD properly.
 
 package fetchware;
-$fetchware::VERSION = '1.013';
+$fetchware::VERSION = '1.014';
 # ABSTRACT: Fetchware is a package manager for source code distributions.
 use strict;
 use warnings;
@@ -1485,7 +1485,7 @@ fetchware - Fetchware is a package manager for source code distributions.
 
 =head1 VERSION
 
-version 1.013
+version 1.014
 
 =head1 SYNOPSIS
 
